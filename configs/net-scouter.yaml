@@ -1,0 +1,27 @@
+interfaces:
+  - eth0
+
+# Required only when the object is not installed at this path.
+objectPath: /usr/lib/net-scouter/flow.bpf.o
+allowVirtualInterfaces: false
+
+capture:
+  ipv4: true
+  ipv6: true
+  tcp: true
+  udp: true
+  icmp: false
+
+aggregation:
+  interval: 30s
+  maxFlows: 65536
+
+export:
+  type: stdout
+
+exclude:
+  destinations: []
+  workloadCIDRs: []
+
+safety:
+  failOpen: true

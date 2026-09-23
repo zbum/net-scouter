@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: net-scouter
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: net-scouter
+  template:
+    metadata:
+      labels:
+        app: net-scouter
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: net-scouter
+          image: net-scouter:dev
+          args: ["run", "--config", "/etc/net-scouter/net-scouter.yaml"]
+          securityContext:
+            privileged: true

@@ -1,0 +1,13 @@
+[Unit]
+Description=net-scouter eBPF network flow discovery agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/net-scouter run --config /etc/net-scouter/net-scouter.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
