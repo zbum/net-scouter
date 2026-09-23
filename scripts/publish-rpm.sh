@@ -12,7 +12,9 @@ NEXUS_URL="${NEXUS_URL:-https://nexus.manty.co.kr}"
 NEXUS_YUM_REPO="${NEXUS_YUM_REPO:-yum-hosted}"
 NEXUS_URL=${NEXUS_URL%/}
 
-"$(dirname "$0")/build-rpm.sh"
+if [[ "${SKIP_PACKAGE_BUILD:-0}" != "1" ]]; then
+	"$(dirname "$0")/build-rpm.sh"
+fi
 
 # shellcheck disable=SC1091
 source dist/rpm/latest.env
