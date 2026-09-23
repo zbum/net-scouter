@@ -14,7 +14,9 @@ NEXUS_APT_REPO="${NEXUS_APT_REPO:-apt-hosted}"
 NEXUS_APT_DISTRIBUTION="${NEXUS_APT_DISTRIBUTION:-stable}"
 NEXUS_URL=${NEXUS_URL%/}
 
-"$(dirname "$0")/build-deb.sh"
+if [[ "${SKIP_PACKAGE_BUILD:-0}" != "1" ]]; then
+	"$(dirname "$0")/build-deb.sh"
+fi
 
 # shellcheck disable=SC1091
 source dist/deb/latest.env

@@ -188,6 +188,8 @@ Jenkinsfile은 `linux && amd64 && ubuntu-build` 노드와 `linux && amd64 && roc
 
 Ubuntu 노드는 `make test`와 `make deb`를 실행하고 Linux 바이너리, BPF 오브젝트, checksum, deb 패키지를 보관한다. Rocky 노드는 `make test`와 `make rpm`을 실행하고 만든 바이너리의 `check`를 직접 실행한 뒤 rpm 패키지를 보관한다. 배포판별 BPF와 패키지 빌드는 각각 Ubuntu 22.04와 Rocky Linux 8 Docker 이미지 안에서 이루어진다.
 
+`release/*` 브랜치에서 두 빌드가 모두 성공하면 Jenkins의 username/password 자격증명 `nexus-credentials`를 사용해 deb와 rpm을 각각 Nexus에 게시한다. 다른 자격증 ID는 `NEXUS_CREDENTIALS_ID` 빌드 파라미터로 지정한다. 빌드 및 메타데이터 확인이 끝난 산출물만 게시하며 게시 단계에서 다시 빌드하지 않는다.
+
 그 다음은 역할이 나뉜다.
 
 1. `RUN_KERNEL_VERIFIERS`를 켠 경우에만 Ubuntu 22.04+와 Rocky 8.10+ verifier 노드가 `sudo -n make verify-bpf-load`를 실행한다. 기본은 꺼져 있다. 노드는 `bpftool`, `/sys/fs/bpf`, 그 명령에 대한 passwordless sudo가 필요하다.
