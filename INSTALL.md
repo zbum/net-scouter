@@ -63,6 +63,8 @@ interfaces:
   - enp2s0
 ```
 
+`capture.ipv6: false`처럼 주소 체계나 TCP/UDP 중 하나만 끌 수 있습니다. 둘 다 끄면 시작이 거부됩니다. ICMP는 아직 지원하지 않으므로 `false`여야 합니다.
+
 목적지 CIDR은 목적지가 맞으면 빠집니다. workload CIDR은 양쪽 주소가 모두 그 대역일 때만 빠집니다. `allowVirtualInterfaces: true`를 명시하지 않으면 가상 인터페이스는 거부됩니다.
 
 ## 실행
@@ -102,7 +104,7 @@ sudo net-scouter flows --format jsonl
 
 | 옵션 | 기본값 | 의미 |
 |---|---|---|
-| `--protocol` | `both` | `tcp`, `udp`, `both` |
+| `--protocol` | `tcp` | `tcp`, `udp`, `both` |
 | `--attempts` | 끄기 | 성립하지 않은 TCP 시도도 표시 |
 | `--local` | 끄기 | 루프백, 출발지와 도착지가 같은 흐름, 설정한 NIC 주소끼리의 흐름도 표시 |
 | `--format` | `table` | `table`, `json`, `jsonl` |
@@ -120,7 +122,7 @@ TCP 연결 집계를 쓸 수 없으면 연결 수는 `0`이 아니라 `n/a` 또�
 
 ## 패키지를 만들 때
 
-릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.0`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
+릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.1`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
 
 BPF 컴파일은 로컬 이미지 `net-scouter-deb-build:22.04`와 `net-scouter-rpm-build:8`을 사용합니다. 없으면 한 번 만들고, 이후에는 다시 받지 않습니다. Dockerfile을 바꾸면 `make package-images`로 다시 만듭니다.
 

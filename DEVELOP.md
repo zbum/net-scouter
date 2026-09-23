@@ -184,6 +184,8 @@ IPv4/IPv6 파서는 IP 헤더가 선언한 길이와 skb 경계를 넘지 않는
 
 Jenkinsfile의 Ubuntu amd64 빌드 노드는 다음을 한다.
 
+`release/<version>` 브랜치는 루트 `VERSION`과 버전이 같아야 한다. Jenkins는 다르면 빌드를 중단하고, 같으면 빌드 표시명을 `#<build> v<version>`으로 설정한다.
+
 1. `make package-images`
 2. `make test`
 3. `make build-linux`
@@ -213,7 +215,7 @@ NEXUS_USER=... NEXUS_PASS=... make publish-deb
 NEXUS_USER=... NEXUS_PASS=... make publish-rpm
 ```
 
-릴리스 버전은 루트 `VERSION`이다. `release/<version>` 브랜치에서만 올리고, 그 브랜치를 `main`과 `develop`에 `--no-ff`로 머지한 뒤 `v<version>` 태그를 `main`에 단다. 현재 릴리스는 `0.1.0`이다. `VERSION`이 없으면 `scripts/package-version.sh`가 개발용 `0.0.0+UTC시각.git해시`를 내며, 작업 트리가 더러우면 `.dirty`가 붙는다. apt와 dnf는 이 개발 버전도 이전 `0+git` 패키지보다 새 것으로 정렬한다.
+릴리스 버전은 루트 `VERSION`이다. `release/<version>` 브랜치에서만 올리고, 그 브랜치를 `main`과 `develop`에 `--no-ff`로 머지한 뒤 `v<version>` 태그를 `main`에 단다. 현재 릴리스는 `0.1.1`이다. `VERSION`이 없으면 `scripts/package-version.sh`가 개발용 `0.0.0+UTC시각.git해시`를 내며, 작업 트리가 더러우면 `.dirty`가 붙는다. apt와 dnf는 이 개발 버전도 이전 `0+git` 패키지보다 새 것으로 정렬한다.
 
 yum은 `https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/`에 PUT한다. repodata depth는 1이다. apt는 `apt-hosted`에 컴포넌트 API로 POST한다. Distribution이 `stable`이 아니면 `dists/stable/.../Packages`에 나타나지 않는다. Nexus는 apt 메타데이터만 서명하고 deb 파일 자체는 서명하지 않는다.
 
