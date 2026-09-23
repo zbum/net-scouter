@@ -188,6 +188,8 @@ Jenkinsfile은 `linux && amd64 && ubuntu-build` 노드와 `linux && amd64 && roc
 
 Ubuntu 노드는 `make test`와 `make deb`를 실행하고 Linux 바이너리, BPF 오브젝트, checksum, deb 패키지를 보관한다. Rocky 노드는 `make test`와 `make rpm`을 실행하고 만든 바이너리의 `check`를 직접 실행한 뒤 rpm 패키지를 보관한다. 배포판별 BPF와 패키지 빌드는 각각 Ubuntu 22.04와 Rocky Linux 8 Docker 이미지 안에서 이루어진다.
 
+`release/*` 브랜치에서 두 빌드가 모두 성공하면 Jenkins의 username/password 자격증명 `nexus-credentials`를 사용해 deb와 rpm을 각각 Nexus에 게시한다. 다른 자격증 ID는 `NEXUS_CREDENTIALS_ID` 빌드 파라미터로 지정한다. 빌드 및 메타데이터 확인이 끝난 산출물만 게시하며 게시 단계에서 다시 빌드하지 않는다.
+
 그 다음은 역할이 나뉜다.
 
 1. `RUN_KERNEL_VERIFIERS`를 켠 경우에만 Ubuntu 22.04+와 Rocky 8.10+ verifier 노드가 `sudo -n make verify-bpf-load`를 실행한다. 기본은 꺼져 있다. 노드는 `bpftool`, `/sys/fs/bpf`, 그 명령에 대한 passwordless sudo가 필요하다.
@@ -208,7 +210,7 @@ NEXUS_USER=... NEXUS_PASS=... make publish-deb
 NEXUS_USER=... NEXUS_PASS=... make publish-rpm
 ```
 
-릴리스 버전은 루트 `VERSION`이다. `release/<version>` 브랜치에서만 올리고, 그 브랜치를 `main`과 `develop`에 `--no-ff`로 머지한 뒤 `v<version>` 태그를 `main`에 단다. 현재 릴리스는 `0.1.2`이다. `VERSION`이 없으면 `scripts/package-version.sh`가 개발용 `0.0.0+UTC시각.git해시`를 내며, 작업 트리가 더러우면 `.dirty`가 붙는다. apt와 dnf는 이 개발 버전도 이전 `0+git` 패키지보다 새 것으로 정렬한다.
+릴리스 버전은 루트 `VERSION`이다. `release/<version>` 브랜치에서만 올리고, 그 브랜치를 `main`과 `develop`에 `--no-ff`로 머지한 뒤 `v<version>` 태그를 `main`에 단다. 현재 릴리스는 `0.1.3`이다. `VERSION`이 없으면 `scripts/package-version.sh`가 개발용 `0.0.0+UTC시각.git해시`를 내며, 작업 트리가 더러우면 `.dirty`가 붙는다. apt와 dnf는 이 개발 버전도 이전 `0+git` 패키지보다 새 것으로 정렬한다.
 
 yum은 `https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/`에 PUT한다. repodata depth는 1이다. apt는 `apt-hosted`에 컴포넌트 API로 POST한다. Distribution이 `stable`이 아니면 `dists/stable/.../Packages`에 나타나지 않는다. Nexus는 apt 메타데이터만 서명하고 deb 파일 자체는 서명하지 않는다.
 
