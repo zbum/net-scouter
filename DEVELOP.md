@@ -182,25 +182,18 @@ IPv4/IPv6 파서는 IP 헤더가 선언한 길이와 skb 경계를 넘지 않는
 
 ## CI
 
-Jenkinsfile의 Ubuntu amd64 빌드 노드는 다음을 한다.
+Jenkinsfile은 `linux && amd64 && ubuntu-build` 노드와 `linux && amd64 && rocky-build` 노드에서 두 빌드를 병렬로 실행한다. 두 노드 모두 Git, Go, Make, Docker, `file`, Clang이 필요하며, 빌드 시작 즉시 도구와 Docker daemon을 점검한다.
 
 `release/<version>` 브랜치는 루트 `VERSION`과 버전이 같아야 한다. Jenkins는 다르면 빌드를 중단하고, 같으면 빌드 표시명을 `#<build> v<version>`으로 설정한다.
 
-1. `make package-images`
-2. `make test`
-3. `make build-linux`
-4. `make build-bpf-image`
-5. `make checksums`
-6. `make deb`와 `make rpm`
-7. `dist/**`를 아티팩트로 보관
+Ubuntu 노드는 `make test`와 `make deb`를 실행하고 Linux 바이너리, BPF 오브젝트, checksum, deb 패키지를 보관한다. Rocky 노드는 `make test`와 `make rpm`을 실행하고 만든 바이너리의 `check`를 직접 실행한 뒤 rpm 패키지를 보관한다. 배포판별 BPF와 패키지 빌드는 각각 Ubuntu 22.04와 Rocky Linux 8 Docker 이미지 안에서 이루어진다.
 
 그 다음은 역할이 나뉜다.
 
-1. 권한 없는 `rockylinux:8.10` 컨테이너가 이미 만든 Go 바이너리의 `check`만 실행한다. 네트워크가 없고 capability를 모두 버린다. 산출물 디렉터리만 읽기로 마운트한다. 컨테이너는 호스트 커널을 쓰므로 Rocky 커널 verifier를 대신하지 않는다.
-2. `RUN_KERNEL_VERIFIERS`를 켠 경우에만 Ubuntu 22.04+와 Rocky 8.10+ verifier 노드가 `sudo -n make verify-bpf-load`를 실행한다. 기본은 꺼져 있다. 노드는 `bpftool`, `/sys/fs/bpf`, 그 명령에 대한 passwordless sudo가 필요하다.
-3. `make verify-bpf-load`는 TC classifier 둘과 tracepoint variant 둘을 로드하고 pin을 확인한 뒤 바로 지운다. `tc`를 실행하거나 인터페이스와 tracepoint에 붙이지 않는다.
+1. `RUN_KERNEL_VERIFIERS`를 켠 경우에만 Ubuntu 22.04+와 Rocky 8.10+ verifier 노드가 `sudo -n make verify-bpf-load`를 실행한다. 기본은 꺼져 있다. 노드는 `bpftool`, `/sys/fs/bpf`, 그 명령에 대한 passwordless sudo가 필요하다.
+2. `make verify-bpf-load`는 TC classifier 둘과 tracepoint variant 둘을 로드하고 pin을 확인한 뒤 바로 지운다. `tc`를 실행하거나 인터페이스와 tracepoint에 붙이지 않는다.
 
-로컬에서 Rocky 사용자 공간만 보려면 Docker가 필요하다.
+로컬에서 Rocky 8 사용자 공간 호환성을 보려면 Docker가 필요하다. 권한과 네트워크를 제거한 컨테이너에서 `flows --help`를 실행해 바이너리가 로드되는지 확인한다. Docker Hub에는 `rockylinux:8.10` 태그가 없으므로 `rockylinux:8`을 사용한다.
 
 ```bash
 make build-linux verify-rocky-userspace
@@ -215,7 +208,7 @@ NEXUS_USER=... NEXUS_PASS=... make publish-deb
 NEXUS_USER=... NEXUS_PASS=... make publish-rpm
 ```
 
-릴리스 버전은 루트 `VERSION`이다. `release/<version>` 브랜치에서만 올리고, 그 브랜치를 `main`과 `develop`에 `--no-ff`로 머지한 뒤 `v<version>` 태그를 `main`에 단다. 현재 릴리스는 `0.1.1`이다. `VERSION`이 없으면 `scripts/package-version.sh`가 개발용 `0.0.0+UTC시각.git해시`를 내며, 작업 트리가 더러우면 `.dirty`가 붙는다. apt와 dnf는 이 개발 버전도 이전 `0+git` 패키지보다 새 것으로 정렬한다.
+릴리스 버전은 루트 `VERSION`이다. `release/<version>` 브랜치에서만 올리고, 그 브랜치를 `main`과 `develop`에 `--no-ff`로 머지한 뒤 `v<version>` 태그를 `main`에 단다. 현재 릴리스는 `0.1.2`이다. `VERSION`이 없으면 `scripts/package-version.sh`가 개발용 `0.0.0+UTC시각.git해시`를 내며, 작업 트리가 더러우면 `.dirty`가 붙는다. apt와 dnf는 이 개발 버전도 이전 `0+git` 패키지보다 새 것으로 정렬한다.
 
 yum은 `https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/`에 PUT한다. repodata depth는 1이다. apt는 `apt-hosted`에 컴포넌트 API로 POST한다. Distribution이 `stable`이 아니면 `dists/stable/.../Packages`에 나타나지 않는다. Nexus는 apt 메타데이터만 서명하고 deb 파일 자체는 서명하지 않는다.
 
