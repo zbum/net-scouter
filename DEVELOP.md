@@ -184,6 +184,8 @@ IPv4/IPv6 파서는 IP 헤더가 선언한 길이와 skb 경계를 넘지 않는
 
 Jenkinsfile의 Ubuntu amd64 빌드 노드는 다음을 한다.
 
+`release/<version>` 브랜치는 루트 `VERSION`과 버전이 같아야 한다. Jenkins는 다르면 빌드를 중단하고, 같으면 빌드 표시명을 `#<build> v<version>`으로 설정한다.
+
 1. `make package-images`
 2. `make test`
 3. `make build-linux`
