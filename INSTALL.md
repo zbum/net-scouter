@@ -4,12 +4,11 @@ Rocky Linux 8.10 / RHEL 8 계열과 Ubuntu 22.04 이상을 대상으로 합니�
 
 ## Ubuntu
 
-Nexus apt 저장소 `apt-hosted`의 Distribution은 `stable`이어야 합니다. 메타데이터 서명에 쓰는 공개 키는 이 저장소의 `deploy/apt/public.gpg.key`입니다. 지문은 `D9B2 41C5 43B7 6D68 4C7D 8B46 EC22 3AF2 F5C7 8607`이고, 2028-09-22에 만료됩니다.
+Nexus apt 저장소 `apt-hosted`의 Distribution은 `stable`이어야 합니다. 메타데이터 서명에 쓰는 공개 키는 `deploy/apt/public.gpg.key`입니다. 지문은 `D9B2 41C5 43B7 6D68 4C7D 8B46 EC22 3AF2 F5C7 8607`이고, 2028-09-22에 만료됩니다. 이 GitHub 저장소는 비공개라 인증 없는 raw 주소로는 받을 수 없습니다. 클론할 수 있는 곳에서 키 파일을 서버로 복사한 뒤 등록합니다.
 
 ```bash
 sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://raw.githubusercontent.com/zbum/net-scouter/main/deploy/apt/public.gpg.key \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/manty-apt.gpg
+sudo gpg --dearmor -o /etc/apt/keyrings/manty-apt.gpg < deploy/apt/public.gpg.key
 echo 'deb [signed-by=/etc/apt/keyrings/manty-apt.gpg] https://nexus.manty.co.kr/repository/apt-hosted/ stable main' \
   | sudo tee /etc/apt/sources.list.d/net-scouter.list
 sudo apt update
