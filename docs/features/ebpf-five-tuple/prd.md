@@ -45,8 +45,11 @@ last-updated: 2026-09-23
 방향성 flow의 유일 키는 다음과 같다.
 
 ```text
-family + protocol + direction + source IP + destination IP + source port + destination port
+family + protocol + direction + source IP + destination IP + destination port
++ source port (UDP only)
 ```
+
+TCP 출발 포트는 ephemeral이라 ACL 신청에 쓰지 않는다. 집계 키와 `flows` 표시에서 제외하고, 같은 나머지 키의 packet·byte·connection 수는 합친다. UDP 출발 포트는 유지한다.
 
 같은 키가 다시 관찰되면 새로운 행을 만들지 않고 다음 값을 갱신한다.
 
@@ -103,18 +106,27 @@ firstSeen + lastSeen + packets + bytes + connections(TCP only)
 - `firstSeen`, `lastSeen`, packet 및 byte counter
 - `inet_sock_set_state` 기반 TCP connection counter와 Linux 4.18/5.15
   tracepoint ABI variant
+- tracefs format probe, 일치하는 connection ABI variant 하나만 attach,
+  기존 qdisc/filter를 유지하는 TC lifecycle
+- kernel map snapshot. packet·byte·connection counter는 같은 map value에 있다
+- 조회와 export 시점의 destination CIDR 제외, 그리고 양 endpoint가 모두
+  workload CIDR일 때만 제외
+- 실행 중 agent에 대한 `flows`와 `status`. 기본 출력은 표이고, JSON과
+  JSON Lines는 명시적 `--format`으로 선택할 수 있다
+- connection counting을 쓸 수 없으면 0이 아니라 사용할 수 없음으로 표시
+- map이 상한에 도달하면 status에 누락 가능성을 표시
+- ephemeral status file과 query socket. 재시작 후 flow history는 유지하지 않는다
+- `net-scouter check`의 OS, BPF syscall, bpffs, BTF, tracepoint, kernel config 보고
+- systemd unit의 runtime directory와 `make install`
 - 항상 `TC_ACT_OK`를 반환하는 fail-open packet 경로
 - Ubuntu build와 Rocky/Ubuntu 실제 kernel verifier 검증을 분리한 Make/Jenkins 기반
 
 남은 1차 범위:
 
-- Go eBPF loader의 tracefs format probe, 정확히 하나의 connection ABI variant
-  명시적 attach, 기존 network 설정을 보존하는 attach/detach lifecycle
-- kernel map snapshot 및 connection/packet 집계 병합
-- CIDR와 동일 host workload traffic filtering
-- 로컬 durable storage와 재시작 복구
-- `flows`, machine-readable output, `status` CLI
-- systemd 설치·실행 구성
+- 로컬 durable storage와 재시작 복구. ADR-004가 accepted되기 전에는 구현하지 않는다
+- 일반 제외 CIDR의 일치 조건과 적용 시점. 지금은 destination 일치와 조회/export
+  시점만 구현되어 있으며 open question으로 남아 있다
+- machine-readable 기본 형식. JSON과 JSON Lines를 모두 제공하지만 기본값은 정하지 않았다
 - Rocky 8.10+ 및 Ubuntu 22.04+ 실제 kernel 통합·성능 시험
 
 ## Success Metrics

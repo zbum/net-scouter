@@ -8,9 +8,11 @@ import (
 	"io"
 	"net/netip"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/example/net-scouter/internal/flow"
+	"github.com/example/net-scouter/internal/query"
 )
 
 type Snapshotter interface{ Snapshot() ([]flow.Record, error) }
@@ -19,11 +21,31 @@ type Agent struct {
 	source       Snapshotter
 	output       io.Writer
 	interval     time.Duration
+	maxFlows     uint32
 	destinations []netip.Prefix
 	workloads    []netip.Prefix
 	previous     map[flowIdentity]cacheEntry
 	generation   uint64
 	cacheLimit   int
+
+	mu             sync.Mutex
+	startedAt      time.Time
+	statusPath     string
+	obs            runtimeObs
+	mapEntries     int
+	lastSnapshotAt time.Time
+	observedFrom   time.Time
+	observedTo     time.Time
+	lastError      string
+}
+
+type runtimeObs struct {
+	Interfaces         []string
+	ConnectionsEnabled bool
+	ConnectionABI      string
+	ConnectionDetail   string
+	Destinations       []string
+	WorkloadCIDRs      []string
 }
 
 type flowIdentity struct {
@@ -50,7 +72,27 @@ func New(source Snapshotter, output io.Writer, interval time.Duration, maxFlows 
 	if err != nil {
 		return nil, fmt.Errorf("workload exclusions: %w", err)
 	}
-	return &Agent{source: source, output: output, interval: interval, destinations: dest, workloads: work, previous: make(map[flowIdentity]cacheEntry), cacheLimit: int(maxFlows) * 3}, nil
+	return &Agent{
+		source:       source,
+		output:       output,
+		interval:     interval,
+		maxFlows:     maxFlows,
+		destinations: dest,
+		workloads:    work,
+		previous:     make(map[flowIdentity]cacheEntry),
+		cacheLimit:   int(maxFlows) * 3,
+		startedAt:    time.Now(),
+		obs: runtimeObs{
+			Destinations:  copyStrings(destinationCIDRs),
+			WorkloadCIDRs: copyStrings(workloadCIDRs),
+		},
+	}, nil
+}
+
+func copyStrings(values []string) []string {
+	out := make([]string, len(values))
+	copy(out, values)
+	return out
 }
 
 func parsePrefixes(values []string) ([]netip.Prefix, error) {
@@ -84,30 +126,60 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 func (a *Agent) export() error {
+	emit, err := a.collectExport()
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(a.output)
+	for _, record := range emit {
+		if err := encoder.Encode(record); err != nil {
+			err = fmt.Errorf("encode flow: %w", err)
+			a.noteError(err)
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *Agent) collectExport() ([]flow.Record, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	records, err := a.source.Snapshot()
 	if err != nil {
-		return fmt.Errorf("snapshot flows: %w", err)
+		a.lastError = err.Error()
+		if werr := query.WriteStatus(a.statusPath, a.statusLocked()); werr != nil {
+			return nil, fmt.Errorf("snapshot flows: %w (status: %v)", err, werr)
+		}
+		return nil, fmt.Errorf("snapshot flows: %w", err)
+	}
+	filtered, st := a.applySnapshot(records)
+	if err := query.WriteStatus(a.statusPath, st); err != nil {
+		return nil, fmt.Errorf("write status: %w", err)
 	}
 	a.generation++
-	encoder := json.NewEncoder(a.output)
-	for _, record := range records {
-		if a.excluded(record) {
-			continue
-		}
+	emit := make([]flow.Record, 0, len(filtered))
+	for _, record := range filtered {
 		identity := flowIdentity{record.SrcIP, record.DstIP, record.SrcPort, record.DstPort, record.Protocol, record.Direction}
 		current := flowCounters{record.Packets, record.Bytes, record.Connections, record.LastSeen}
 		previous, exists := a.previous[identity]
 		unchanged := exists && previous.counters == current && previous.generation+1 == a.generation
 		a.previous[identity] = cacheEntry{current, a.generation}
-		if unchanged {
-			continue
-		}
-		if err := encoder.Encode(record); err != nil {
-			return fmt.Errorf("encode flow: %w", err)
+		if !unchanged {
+			emit = append(emit, record)
 		}
 	}
 	a.pruneCache()
-	return nil
+	return emit, nil
+}
+
+func (a *Agent) noteError(err error) {
+	if err == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.lastError = err.Error()
+	_ = query.WriteStatus(a.statusPath, a.statusLocked())
 }
 
 func (a *Agent) pruneCache() {
@@ -131,6 +203,17 @@ func (a *Agent) pruneCache() {
 	for _, item := range items[:len(items)-a.cacheLimit] {
 		delete(a.previous, item.key)
 	}
+}
+
+func (a *Agent) visible(records []flow.Record) []flow.Record {
+	records = flow.CollapseTCPSourcePorts(records)
+	out := make([]flow.Record, 0, len(records))
+	for _, record := range records {
+		if !a.excluded(record) {
+			out = append(out, record)
+		}
+	}
+	return out
 }
 
 func (a *Agent) excluded(r flow.Record) bool {

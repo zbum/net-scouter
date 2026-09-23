@@ -89,6 +89,8 @@ Example raw flow:
 10.10.1.20:48321 -> 10.20.1.30:3306 TCP egress
 ```
 
+TCP aggregation ignores the ephemeral source port. `flows` does not show it, and packet, byte, and connection counters for the same direction, addresses, and destination port are summed. UDP source ports stay in the key and in the output.
+
 ACL-oriented normalization can later collapse ephemeral client ports:
 
 ```text
@@ -108,8 +110,8 @@ OUTBOUND 10.10.1.20 -> 10.20.1.30 TCP/3306
 
 ### v0.1
 
-- [ ] Linux capability check
-- [ ] Interface selection
+- [x] Linux capability check
+- [x] Interface selection
 - [x] TC ingress classifier
 - [x] TC egress classifier
 - [x] IPv4 parsing
@@ -121,11 +123,10 @@ OUTBOUND 10.10.1.20 -> 10.20.1.30 TCP/3306
 - [x] firstSeen / lastSeen
 - [x] packet / byte counters
 - [x] TCP established connection counter (Linux 4.18 and 5.15 tracepoint ABI variants)
-- [ ] stdout exporter
-- [ ] JSONL exporter
+- [x] stdout JSONL exporter
 - [ ] ACL-oriented normalization
-- [ ] destination exclusion rules
-- [ ] systemd unit
+- [x] destination exclusion rules
+- [x] systemd unit
 - [ ] Kubernetes DaemonSet example
 
 ### Later
@@ -272,8 +273,16 @@ Only one process may collect at a time; Linux enforces this with the advisory
 lock `/run/net-scouter.lock`. A pre-existing TC filter collision is reported
 and collection stops rather than replacing an unknown or stale filter.
 
-This slice does not persist snapshots. Restarting it resets collected state;
-the storage-backed `flows` and `status` commands remain a later milestone.
+`flows` and `status` read the running agent through `/run/net-scouter/query.sock`.
+`status` also reads `/run/net-scouter/status.json` when the socket is down, and
+uses the recorded pid to mark that file stale after the process exits. The
+table is the default flow view. `--format json` and `--format jsonl` are both
+available; neither machine format is the sole default while that choice is
+still open. TCP connections are `n/a` or JSON `null` when counting is disabled,
+not numeric zero. UDP has no connection count.
+
+Restarting the agent drops collected flows. Local durable storage is not
+enabled, so there is no restarted history to query.
 Shutdown removes only filters owned by this process and never removes clsact.
 
 ## Commands
@@ -284,11 +293,75 @@ Initial CLI contract:
 sudo net-scouter check
 sudo net-scouter run --config /etc/net-scouter/net-scouter.yaml
 net-scouter status
+net-scouter status --format json
 net-scouter flows
-net-scouter report --view acl
+net-scouter flows --format json
+net-scouter flows --format jsonl
 ```
 
-Only `check` and the basic `run` skeleton are expected in the initial bootstrap. Other commands are roadmap interfaces.
+`check` reports the host OS, BPF syscall, bpffs, vmlinux BTF, TCP state
+tracepoint format, euid, and kernel config when it is exposed. It fails on an
+unsupported OS or when the BPF syscall is missing. Other gaps are warnings.
+`net-scouter report` is not implemented.
+
+Install the Linux release artifacts, the example config, the BPF object, and
+the systemd unit with:
+
+```bash
+make build-release
+sudo make install
+sudo cp /etc/net-scouter/net-scouter.yaml.example /etc/net-scouter/net-scouter.yaml
+```
+
+Package versions are `0.0.0+UTC timestamp.git`. apt and dnf treat that as newer than the earlier `0+git` packages.
+
+Publish an RPM to the Nexus yum repository `yum-hosted`. Metadata is one
+directory deep, so clients use the `net-scouter/` base URL. Set
+`NEXUS_USER` and `NEXUS_PASS` in the environment. `GOARCH=arm64`
+publishes the aarch64 package; the default is amd64/x86_64.
+
+```bash
+NEXUS_USER=... NEXUS_PASS=... make publish-rpm
+```
+
+On Rocky or RHEL:
+
+```bash
+cat >/etc/yum.repos.d/net-scouter.repo <<'EOF'
+[net-scouter]
+name=net-scouter
+baseurl=https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/
+enabled=1
+gpgcheck=0
+EOF
+dnf install net-scouter
+```
+
+The package is unsigned and does not start the service. Edit
+`/etc/net-scouter/net-scouter.yaml` first. `flows` and `status` can query a
+running agent only after that service is up on a Linux host.
+
+Publish a deb to the Nexus apt repository `apt-hosted`. That repository must
+already exist with distribution `stable`. The same `NEXUS_USER` and
+`NEXUS_PASS` variables are used. `GOARCH=arm64` publishes the arm64 package.
+
+```bash
+NEXUS_USER=... NEXUS_PASS=... make publish-deb
+```
+
+On Ubuntu, add the repository public key and the `stable main` entry:
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo gpg --dearmor -o /etc/apt/keyrings/manty-apt.gpg < public.gpg.key
+echo 'deb [signed-by=/etc/apt/keyrings/manty-apt.gpg] https://nexus.manty.co.kr/repository/apt-hosted/ stable main' \
+  | sudo tee /etc/apt/sources.list.d/net-scouter.list
+sudo apt update
+sudo apt install net-scouter
+```
+
+Nexus signs the apt metadata, not the deb. This package also does not start
+the service.
 
 ## Important limitations
 

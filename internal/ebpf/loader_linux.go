@@ -30,6 +30,8 @@ type Loader struct {
 	flows          *cebpf.Map
 	trace          link.Link
 	traceAttempted bool
+	connEnabled    bool
+	connABI        string
 	filters        []netlink.Filter
 }
 
@@ -71,20 +73,31 @@ func (l *Loader) AttachTracepoint() (bool, error) {
 		return false, err
 	}
 	var p *cebpf.Program
+	abiName := ""
 	if abi == TraceProtocolU8 {
 		p = l.collection.Programs["tcp_conn_u8"]
+		abiName = "4.18"
 	}
 	if abi == TraceProtocolU16 {
 		p = l.collection.Programs["tcp_conn_u16"]
+		abiName = "5.15"
 	}
 	if p == nil {
+		l.connEnabled = false
+		l.connABI = ""
 		return false, nil
 	}
 	l.trace, err = link.Tracepoint("sock", "inet_sock_set_state", p, nil)
 	if err != nil {
 		return false, fmt.Errorf("attach TCP state tracepoint: %w", err)
 	}
+	l.connEnabled = true
+	l.connABI = abiName
 	return true, nil
+}
+
+func (l *Loader) ConnectionCounting() (bool, string) {
+	return l.connEnabled, l.connABI
 }
 
 func (l *Loader) AttachTC(names []string, allowVirtual bool) error {

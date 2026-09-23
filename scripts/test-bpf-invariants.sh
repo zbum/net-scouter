@@ -42,6 +42,11 @@ grep -q 'event->oldstate == TCP_NEW_SYN_RECV' "$source_file"
 grep -q '__sync_fetch_and_add(&current->connections, 1)' "$source_file"
 grep -q 'total_length < header_length + sizeof(struct ports_hdr)' "$source_file"
 grep -q 'payload_length == 0' "$source_file"
+grep -q 'drop_tcp_source_port' "$source_file"
+if [[ $(grep -c 'drop_tcp_source_port(' "$source_file") -ne 3 ]]; then
+  echo "TCP source port must be omitted from both packet and connection keys" >&2
+  exit 1
+fi
 grep -q 'parse_ports(cursor + header_length, packet_end, data_end' "$source_file"
 grep -q 'parse_ports(cursor, packet_end, data_end' "$source_file"
 grep -q '(void \*)(ports + 1) > packet_end' "$source_file"

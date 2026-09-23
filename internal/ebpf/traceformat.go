@@ -11,6 +11,12 @@ import (
 
 var traceFormatPaths = []string{"/sys/kernel/tracing/events/sock/inet_sock_set_state/format", "/sys/kernel/debug/tracing/events/sock/inet_sock_set_state/format"}
 
+func TraceFormatCandidates() []string {
+	out := make([]string, len(traceFormatPaths))
+	copy(out, traceFormatPaths)
+	return out
+}
+
 func probeTraceFormat(paths []string, open func(string) (io.ReadCloser, error)) (TraceABI, error) {
 	for _, path := range paths {
 		reader, err := open(path)

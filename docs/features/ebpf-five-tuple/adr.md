@@ -284,3 +284,33 @@ YAML parsing의 오류 처리와 kernel 호환성 부담이 커진다. 사용자
   제한해야 한다.
 - local durable storage 구현은 ADR-004가 별도로 accepted되기 전까지 이 결정의
   일부로 간주하지 않는다.
+
+---
+
+## ADR-007 — TCP 집계 키에서 출발 포트를 제외
+
+**Status:** accepted
+
+**Context**
+
+TCP 출발 포트는 연결마다 바뀌는 ephemeral port다. ACL 신청에는 도착 포트만 필요하고, 출발 포트를 키에 두면 같은 서비스 통신이 행으로 쪼개져 조회와 map 용량을 낭비한다.
+
+**Decision**
+
+TCP flow의 kernel map 키와 조회 결과에서 출발 포트를 제외한다. 같은 방향, 주소, 도착 포트의 packet·byte·connection 수는 한 항목으로 합친다. UDP 출발 포트는 키와 표시에 유지한다.
+
+**Drivers**
+
+- ACL에 필요한 식별자만 남긴다.
+- ephemeral port로 인한 map 증가를 줄인다.
+- 패킷 경로와 TCP established 이벤트가 같은 키를 쓰게 한다.
+
+**Alternatives Considered**
+
+- **표시만 숨기고 키는 유지:** 조회는 짧아지지만 kernel map은 여전히 연결마다 항목을 소비하므로 채택하지 않는다.
+- **UDP 출발 포트도 제외:** DNS처럼 출발 포트가 통신을 구분하는 경우가 있어 채택하지 않는다.
+
+**Consequences**
+
+- 개별 TCP 연결의 출발 포트는 복원할 수 없다.
+- 기존 BPF object는 재배포해야 커널 집계에 반영된다. 재배포 전에는 조회 시점에 같은 병합을 적용한다.

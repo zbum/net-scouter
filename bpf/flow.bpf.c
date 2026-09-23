@@ -183,6 +183,13 @@ static __always_inline void copy_addr(__u8 *dst, const __u8 *src, __u32 length)
         dst[i] = i < length ? src[i] : 0;
 }
 
+/* TCP source ports are ephemeral and are not an ACL identity. */
+static __always_inline void drop_tcp_source_port(struct flow_key *key)
+{
+    if (key->protocol == IPPROTO_TCP)
+        key->src_port = 0;
+}
+
 static __always_inline int parse_ports(void *cursor, void *packet_end,
                                        void *data_end,
                                        struct flow_key *key)
@@ -194,6 +201,7 @@ static __always_inline int parse_ports(void *cursor, void *packet_end,
         return 0;
     key->src_port = ntohs(ports->src);
     key->dst_port = ntohs(ports->dst);
+    drop_tcp_source_port(key);
     return 1;
 }
 
@@ -400,6 +408,7 @@ static __always_inline int count_tcp_connection(struct socket_transition *event)
         return 0;
     }
 
+    drop_tcp_source_port(&key);
     aggregate_connection(&key);
     return 0;
 }
