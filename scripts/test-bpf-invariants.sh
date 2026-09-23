@@ -44,6 +44,8 @@ grep -q 'total_length < header_length + sizeof(struct ports_hdr)' "$source_file"
 grep -q 'payload_length == 0' "$source_file"
 grep -q 'drop_ephemeral_source_port' "$source_file"
 grep -q 'reply_to_client' "$source_file"
+grep -q 'capture_cfg' "$source_file"
+grep -q 'capture_allowed' "$source_file"
 if [[ $(grep -c 'drop_ephemeral_source_port(' "$source_file") -ne 3 ]]; then
   echo "ephemeral source port must be omitted from packet and connection keys" >&2
   exit 1

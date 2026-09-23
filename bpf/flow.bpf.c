@@ -5,6 +5,7 @@
 #define __always_inline inline __attribute__((always_inline))
 #define TC_ACT_OK 0
 #define BPF_MAP_TYPE_LRU_HASH 9
+#define BPF_MAP_TYPE_ARRAY 2
 #define BPF_NOEXIST 1
 #define ETH_P_IP 0x0800
 #define ETH_P_IPV6 0x86dd
@@ -166,6 +167,20 @@ struct bpf_map_def SEC("maps") flows = {
     .max_entries = 65536,
 };
 
+struct capture_cfg {
+    __u8 ipv4;
+    __u8 ipv6;
+    __u8 tcp;
+    __u8 udp;
+};
+
+struct bpf_map_def SEC("maps") capture_cfg = {
+    .type = BPF_MAP_TYPE_ARRAY,
+    .key_size = sizeof(__u32),
+    .value_size = sizeof(struct capture_cfg),
+    .max_entries = 1,
+};
+
 static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *)1;
 static long (*bpf_map_update_elem)(void *map, const void *key,
                                    const void *value, __u64 flags) = (void *)2;
@@ -315,6 +330,25 @@ static __always_inline void update_flow(struct flow_value *value, __u64 now,
     __sync_fetch_and_add(&value->bytes, bytes);
 }
 
+static __always_inline int capture_allowed(__u8 family, __u8 protocol)
+{
+    __u32 index = 0;
+    struct capture_cfg *cfg = bpf_map_lookup_elem(&capture_cfg, &index);
+
+    /* A missing config keeps observation working. The loader writes it before attach. */
+    if (!cfg)
+        return 1;
+    if (family == FLOW_FAMILY_IPV4 && !cfg->ipv4)
+        return 0;
+    if (family == FLOW_FAMILY_IPV6 && !cfg->ipv6)
+        return 0;
+    if (protocol == IPPROTO_TCP && !cfg->tcp)
+        return 0;
+    if (protocol == IPPROTO_UDP && !cfg->udp)
+        return 0;
+    return 1;
+}
+
 static __always_inline void aggregate(const struct flow_key *key, __u64 bytes)
 {
     struct flow_value *current;
@@ -416,6 +450,8 @@ static __always_inline int count_tcp_connection(struct socket_transition *event)
         return 0;
     }
 
+    if (!capture_allowed(key.family, key.protocol))
+        return 0;
     drop_ephemeral_source_port(&key);
     aggregate_connection(&key);
     return 0;
@@ -503,7 +539,7 @@ static __always_inline int observe(struct __sk_buff *skb, __u8 direction)
     key.direction = direction;
     if ((protocol == ETH_P_IP && parse_ipv4(cursor, data_end, &key)) ||
         (protocol == ETH_P_IPV6 && parse_ipv6(cursor, data_end, &key))) {
-        if (!reply_to_client(&key)) {
+        if (capture_allowed(key.family, key.protocol) && !reply_to_client(&key)) {
             drop_ephemeral_source_port(&key);
             aggregate(&key, skb->len);
         }

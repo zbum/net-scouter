@@ -38,6 +38,22 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadAllowsDisablingOneFamily(t *testing.T) {
+	t.Parallel()
+	p := filepath.Join(t.TempDir(), "c.yaml")
+	body := "interfaces: [eth0]\ncapture: {ipv4: true, ipv6: false, tcp: true, udp: true, icmp: false}\nsafety: {failOpen: true}\nexport: {type: stdout}\n"
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Capture.IPv6 == nil || *c.Capture.IPv6 {
+		t.Fatalf("ipv6 = %v", c.Capture.IPv6)
+	}
+}
+
 func TestLoadRejectsTrailingDocumentAndExcessiveMap(t *testing.T) {
 	t.Parallel()
 	base := "interfaces: [eth0]\ncapture: {ipv4: true, ipv6: true, tcp: true, udp: true, icmp: false}\nsafety: {failOpen: true}\nexport: {type: stdout}\n"

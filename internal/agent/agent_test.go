@@ -15,6 +15,25 @@ type fakeSnapshotter struct{ records []flow.Record }
 
 func (f fakeSnapshotter) Snapshot() ([]flow.Record, error) { return f.records, nil }
 
+func TestExportDropsDisabledIPv6(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	a, err := New(fakeSnapshotter{records: []flow.Record{
+		{SrcIP: netip.MustParseAddr("10.0.0.1"), DstIP: netip.MustParseAddr("10.0.0.2"), DstPort: 443, Protocol: 6, Direction: flow.DirectionEgress, Connections: 1},
+		{SrcIP: netip.MustParseAddr("2001:db8::1"), DstIP: netip.MustParseAddr("2001:db8::2"), DstPort: 443, Protocol: 6, Direction: flow.DirectionEgress, Connections: 1},
+	}}, &output, time.Hour, 10, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetCapture(true, false, true, true)
+	if err := a.export(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "2001:db8") || !strings.Contains(output.String(), "10.0.0.2") {
+		t.Fatalf("output: %s", output.String())
+	}
+}
+
 func TestRunFiltersDestinationAndSameHostWorkload(t *testing.T) {
 	t.Parallel()
 	records := []flow.Record{

@@ -21,6 +21,17 @@ pipeline {
             agent { label "${params.BUILD_NODE_LABEL}" }
             steps {
                 checkout scm
+                script {
+                    if (env.BRANCH_NAME?.startsWith('release/')) {
+                        def branchVersion = env.BRANCH_NAME.substring('release/'.length())
+                        def releaseVersion = readFile('VERSION').trim()
+                        if (releaseVersion != branchVersion) {
+                            error("release branch ${env.BRANCH_NAME} does not match VERSION ${releaseVersion}")
+                        }
+                        currentBuild.displayName = "#${env.BUILD_NUMBER} v${releaseVersion}"
+                        currentBuild.description = env.BRANCH_NAME
+                    }
+                }
                 sh 'make package-images'
                 sh 'make test'
                 sh 'make build-linux'

@@ -6,6 +6,9 @@ makefile=Makefile
 loader=scripts/verify-bpf-load.sh
 
 grep -q "name: 'RUN_KERNEL_VERIFIERS', defaultValue: false" "$jenkinsfile"
+grep -q "env.BRANCH_NAME?.startsWith('release/')" "$jenkinsfile"
+grep -q "release branch .* does not match VERSION" "$jenkinsfile"
+grep -q 'currentBuild.displayName = "#${env.BUILD_NUMBER} v${releaseVersion}"' "$jenkinsfile"
 grep -q 'ROCKY_IMAGE ?= rockylinux:8.10' "$makefile"
 grep -q 'CGO_ENABLED=0 GOOS=linux GOARCH=' "$makefile"
 grep -q 'bpftool prog loadall "$object" "$pin_dir"$' "$loader"

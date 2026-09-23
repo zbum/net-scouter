@@ -63,6 +63,8 @@ interfaces:
   - enp2s0
 ```
 
+`capture.ipv6: false`처럼 주소 체계나 TCP/UDP 중 하나만 끌 수 있습니다. 둘 다 끄면 시작이 거부됩니다. ICMP는 아직 지원하지 않으므로 `false`여야 합니다.
+
 목적지 CIDR은 목적지가 맞으면 빠집니다. workload CIDR은 양쪽 주소가 모두 그 대역일 때만 빠집니다. `allowVirtualInterfaces: true`를 명시하지 않으면 가상 인터페이스는 거부됩니다.
 
 ## 실행
@@ -102,7 +104,7 @@ sudo net-scouter flows --format jsonl
 
 | 옵션 | 기본값 | 의미 |
 |---|---|---|
-| `--protocol` | `both` | `tcp`, `udp`, `both` |
+| `--protocol` | `tcp` | `tcp`, `udp`, `both` |
 | `--attempts` | 끄기 | 성립하지 않은 TCP 시도도 표시 |
 | `--local` | 끄기 | 루프백, 출발지와 도착지가 같은 흐름, 설정한 NIC 주소끼리의 흐름도 표시 |
 | `--format` | `table` | `table`, `json`, `jsonl` |

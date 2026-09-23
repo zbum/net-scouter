@@ -80,6 +80,9 @@ func run(args []string) (runErr error) {
 		return err
 	}
 	defer func() { runErr = errors.Join(runErr, l.Close()) }()
+	if err := l.SetCapture(*cfg.Capture.IPv4, *cfg.Capture.IPv6, *cfg.Capture.TCP, *cfg.Capture.UDP); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -107,6 +110,7 @@ func run(args []string) (runErr error) {
 		return err
 	}
 	a.SetRuntime(cfg.Interfaces, enabled, abi, detail)
+	a.SetCapture(*cfg.Capture.IPv4, *cfg.Capture.IPv6, *cfg.Capture.TCP, *cfg.Capture.UDP)
 	if err := a.EnableStatusFile(query.DefaultStatusPath); err != nil {
 		return err
 	}
@@ -151,7 +155,7 @@ func flowsCmd(args []string) error {
 	fs := flag.NewFlagSet("flows", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	format := fs.String("format", "table", "table, json, or jsonl")
-	protocol := fs.String("protocol", "both", "tcp, udp, or both")
+	protocol := fs.String("protocol", "tcp", "tcp, udp, or both")
 	attempts := fs.Bool("attempts", false, "include TCP connection attempts that did not establish")
 	includeLocal := fs.Bool("local", false, "include loopback and flows that stay on the configured NIC addresses")
 	configPath := fs.String("config", "/etc/net-scouter/net-scouter.yaml", "config used to resolve NIC addresses")
