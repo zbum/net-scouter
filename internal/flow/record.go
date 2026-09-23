@@ -58,6 +58,43 @@ type Record struct {
 	Connections uint64     `json:"connections,omitempty"`
 }
 
+// ForACL keeps firewall rules and drops the return path.
+// Ingress keeps the destination port. Egress keeps the destination port of a
+// connection this host opened. Packets this host sends back to a client are removed.
+func ForACL(records []Record) []Record {
+	const ephemeral = 32768
+	type peer struct {
+		src, dst  netip.Addr
+		protocol  uint8
+		direction Direction
+	}
+	lowPort := make(map[peer]bool, len(records))
+	for _, record := range records {
+		if record.DstPort > 0 && record.DstPort < ephemeral {
+			lowPort[peer{record.SrcIP, record.DstIP, record.Protocol, record.Direction}] = true
+		}
+	}
+	kept := make([]Record, 0, len(records))
+	for _, record := range records {
+		if record.Protocol != 6 && record.Protocol != 17 {
+			kept = append(kept, record)
+			continue
+		}
+		opposite := DirectionIngress
+		if record.Direction == DirectionIngress {
+			opposite = DirectionEgress
+		}
+		returnPath := record.Connections == 0 && record.DstPort >= ephemeral &&
+			lowPort[peer{record.DstIP, record.SrcIP, record.Protocol, opposite}]
+		if returnPath {
+			continue
+		}
+		record.SrcPort = 0
+		kept = append(kept, record)
+	}
+	return collapseSameKey(kept)
+}
+
 // CollapseTCPSourcePorts merges TCP rows that differ only by source port.
 // UDP keeps its source port. Packet, byte, and connection counters are summed.
 func CollapseTCPSourcePorts(records []Record) []Record {
@@ -66,6 +103,13 @@ func CollapseTCPSourcePorts(records []Record) []Record {
 		record.SrcPort = 0
 		return []Record{record}
 	}
+	if len(records) < 2 {
+		return records
+	}
+	return collapseSameKey(records)
+}
+
+func collapseSameKey(records []Record) []Record {
 	if len(records) < 2 {
 		return records
 	}

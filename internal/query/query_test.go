@@ -55,6 +55,58 @@ func TestPrepareFlowsSeparatesUnavailableConnections(t *testing.T) {
 	}
 }
 
+func TestFilterProtocol(t *testing.T) {
+	t.Parallel()
+	when := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	result := PrepareFlows([]flow.Record{
+		{SrcIP: netip.MustParseAddr("10.0.0.1"), DstIP: netip.MustParseAddr("10.0.0.2"), Protocol: 6, DstPort: 22, Direction: flow.DirectionIngress, FirstSeen: when, LastSeen: when},
+		{SrcIP: netip.MustParseAddr("10.0.0.1"), DstIP: netip.MustParseAddr("8.8.8.8"), Protocol: 17, DstPort: 53, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when},
+	}, true, "5.15", "")
+	both, err := FilterProtocol(result, "both")
+	if err != nil || len(both.Records) != 2 {
+		t.Fatalf("both: %v %+v", err, both.Records)
+	}
+	tcp, err := FilterProtocol(result, "tcp")
+	if err != nil || len(tcp.Records) != 1 || tcp.Records[0].Protocol != 6 {
+		t.Fatalf("tcp: %v %+v", err, tcp.Records)
+	}
+	udp, err := FilterProtocol(result, "udp")
+	if err != nil || len(udp.Records) != 1 || udp.Records[0].DstPort != 53 {
+		t.Fatalf("udp: %v %+v", err, udp.Records)
+	}
+	if _, err := FilterProtocol(result, "icmp"); err == nil {
+		t.Fatal("icmp was accepted")
+	}
+}
+
+func TestFilterEstablishedHidesFailedTCPByDefault(t *testing.T) {
+	t.Parallel()
+	when := time.Date(2026, 9, 24, 0, 42, 26, 0, time.UTC)
+	zero := uint64(0)
+	one := uint64(1)
+	result := FlowsResult{
+		ConnectionsAvailable: true,
+		Records: []FlowView{
+			{SrcIP: "192.168.31.102", DstIP: "8.8.8.8", Protocol: 6, DstPort: 53, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when, Packets: 10, Connections: &one},
+			{SrcIP: "192.168.31.102", DstIP: "69.5.169.100", Protocol: 6, DstPort: 23827, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when, Packets: 3, Connections: &zero},
+			{SrcIP: "192.168.31.102", DstIP: "8.8.8.8", Protocol: 17, DstPort: 53, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when, Packets: 1},
+		},
+	}
+	established := FilterEstablished(result, false)
+	if len(established.Records) != 2 || established.Records[0].DstPort != 53 || established.Records[1].Protocol != 17 {
+		t.Fatalf("established = %+v", established.Records)
+	}
+	all := FilterEstablished(result, true)
+	if len(all.Records) != 3 {
+		t.Fatalf("attempts = %+v", all.Records)
+	}
+	unavailable := result
+	unavailable.ConnectionsAvailable = false
+	if got := FilterEstablished(unavailable, false); len(got.Records) != 3 {
+		t.Fatalf("hidden flows while connection counts are unavailable: %+v", got.Records)
+	}
+}
+
 func TestLoadStatusUsesSavedFileWhenAgentIsGone(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

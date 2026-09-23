@@ -20,6 +20,29 @@ func TestRecordJSONIncludesTCPConnections(t *testing.T) {
 	}
 }
 
+func TestForACLDropsReturnPathAndCollapsesPorts(t *testing.T) {
+	t.Parallel()
+	server := netip.MustParseAddr("192.168.31.102")
+	client := netip.MustParseAddr("192.168.31.1")
+	resolver := netip.MustParseAddr("8.8.8.8")
+	got := ForACL([]Record{
+		{SrcIP: client, DstIP: server, SrcPort: 50000, DstPort: 22, Protocol: 6, Direction: DirectionIngress, Packets: 10, Bytes: 100},
+		{SrcIP: server, DstIP: client, SrcPort: 22, DstPort: 50000, Protocol: 6, Direction: DirectionEgress, Packets: 8, Bytes: 80},
+		{SrcIP: server, DstIP: resolver, SrcPort: 40000, DstPort: 53, Protocol: 17, Direction: DirectionEgress, Packets: 1, Bytes: 40},
+		{SrcIP: server, DstIP: resolver, SrcPort: 40001, DstPort: 53, Protocol: 17, Direction: DirectionEgress, Packets: 1, Bytes: 40},
+		{SrcIP: resolver, DstIP: server, SrcPort: 53, DstPort: 40000, Protocol: 17, Direction: DirectionIngress, Packets: 1, Bytes: 80},
+	})
+	if len(got) != 2 {
+		t.Fatalf("len=%d records=%+v", len(got), got)
+	}
+	if got[0].DstPort != 22 || got[0].SrcPort != 0 || got[0].Direction != DirectionIngress || got[0].Packets != 10 {
+		t.Fatalf("inbound = %+v", got[0])
+	}
+	if got[1].DstPort != 53 || got[1].SrcPort != 0 || got[1].Direction != DirectionEgress || got[1].Packets != 2 || got[1].Bytes != 80 {
+		t.Fatalf("outbound = %+v", got[1])
+	}
+}
+
 func TestCollapseTCPSourcePorts(t *testing.T) {
 	t.Parallel()
 	src := netip.MustParseAddr("10.0.0.1")

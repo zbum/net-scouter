@@ -42,12 +42,15 @@ fi
 
 make build-linux "GOARCH=$GOARCH"
 
-image="${RPM_BUILD_IMAGE:-rockylinux:8}"
+image="${RPM_BUILD_IMAGE:-net-scouter-rpm-build:8}"
 platform="${RPM_BUILD_PLATFORM:-linux/amd64}"
+"$root/scripts/ensure-build-image.sh" "$image" "$root/deploy/docker/rpm-build.Dockerfile" "$platform"
 echo "building BPF and RPM in $image ($platform) for $RPM_ARCH"
 
 docker run --rm -i \
 	--platform "$platform" \
+	-u "$(id -u):$(id -g)" \
+	-e HOME=/tmp \
 	-e "BPF_ARCH=$BPF_ARCH" \
 	-e "VERSION=$VERSION" \
 	-e "RELEASE=$RELEASE" \
@@ -58,7 +61,6 @@ docker run --rm -i \
 	"$image" \
 	bash -s <<'EOS'
 set -euo pipefail
-dnf install -y clang make rpm-build
 make build-bpf "BPF_ARCH=$BPF_ARCH" BPF_CPU=v1
 
 top=$(mktemp -d)

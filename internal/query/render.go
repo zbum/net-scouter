@@ -89,6 +89,43 @@ func FormatStatus(st Status) string {
 	return b.String()
 }
 
+func FilterProtocol(result FlowsResult, protocol string) (FlowsResult, error) {
+	var want uint8
+	switch protocol {
+	case "", "both":
+		return result, nil
+	case "tcp":
+		want = 6
+	case "udp":
+		want = 17
+	default:
+		return FlowsResult{}, fmt.Errorf("protocol must be tcp, udp, or both")
+	}
+	filtered := make([]FlowView, 0, len(result.Records))
+	for _, record := range result.Records {
+		if record.Protocol == want {
+			filtered = append(filtered, record)
+		}
+	}
+	result.Records = filtered
+	return result, nil
+}
+
+func FilterEstablished(result FlowsResult, includeAttempts bool) FlowsResult {
+	if includeAttempts || !result.ConnectionsAvailable {
+		return result
+	}
+	filtered := make([]FlowView, 0, len(result.Records))
+	for _, record := range result.Records {
+		if record.Protocol == 6 && (record.Connections == nil || *record.Connections == 0) {
+			continue
+		}
+		filtered = append(filtered, record)
+	}
+	result.Records = filtered
+	return result
+}
+
 func FormatFlows(result FlowsResult, format string) (string, error) {
 	switch format {
 	case "table", "":
@@ -144,14 +181,13 @@ func formatTable(result FlowsResult) string {
 	}
 	fmt.Fprintf(&b, "durable storage: %s\n", empty(result.DurableStorage, DurableUnavailable))
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SRC\tDST\tPROTO\tDIR\tSPORT\tDPORT\tFIRST SEEN\tLAST SEEN\tPACKETS\tBYTES\tCONNECTIONS")
+	fmt.Fprintln(w, "SRC\tDST\tPROTO\tDIR\tPORT\tFIRST SEEN\tLAST SEEN\tPACKETS\tBYTES\tCONNECTIONS")
 	for _, record := range result.Records {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%d\t%d\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%d\t%d\t%s\n",
 			record.SrcIP,
 			record.DstIP,
 			protocolName(record.Protocol),
 			record.Direction.String(),
-			sourcePortCell(record),
 			record.DstPort,
 			record.FirstSeen.Format(time.RFC3339),
 			record.LastSeen.Format(time.RFC3339),
@@ -162,13 +198,6 @@ func formatTable(result FlowsResult) string {
 	}
 	_ = w.Flush()
 	return b.String()
-}
-
-func sourcePortCell(record FlowView) string {
-	if record.Protocol == 6 {
-		return "-"
-	}
-	return strconv.FormatUint(uint64(record.SrcPort), 10)
 }
 
 func connectionCell(record FlowView) string {

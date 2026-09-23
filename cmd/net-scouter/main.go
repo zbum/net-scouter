@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -44,8 +45,16 @@ func main() {
 	}
 }
 
+func configuredNICAddrs(path string) []netip.Addr {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil
+	}
+	return query.InterfaceAddrs(cfg.Interfaces)
+}
+
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: net-scouter <check|run --config PATH|status [--format text|json]|flows [--format table|json|jsonl]>")
+	fmt.Fprintln(os.Stderr, "usage: net-scouter <check|run --config PATH|status [--format text|json]|flows [--protocol tcp|udp|both] [--attempts] [--local] [--config PATH] [--format table|json|jsonl]>")
 }
 
 func run(args []string) (runErr error) {
@@ -142,6 +151,10 @@ func flowsCmd(args []string) error {
 	fs := flag.NewFlagSet("flows", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	format := fs.String("format", "table", "table, json, or jsonl")
+	protocol := fs.String("protocol", "both", "tcp, udp, or both")
+	attempts := fs.Bool("attempts", false, "include TCP connection attempts that did not establish")
+	includeLocal := fs.Bool("local", false, "include loopback and flows that stay on the configured NIC addresses")
+	configPath := fs.String("config", "/etc/net-scouter/net-scouter.yaml", "config used to resolve NIC addresses")
 	socketPath := fs.String("socket", query.DefaultSocketPath, "agent query socket")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -156,6 +169,12 @@ func flowsCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	result, err = query.FilterProtocol(result, *protocol)
+	if err != nil {
+		return err
+	}
+	result = query.FilterEstablished(result, *attempts)
+	result = query.FilterLocal(result, *includeLocal, configuredNICAddrs(*configPath))
 	text, err := query.FormatFlows(result, *format)
 	if err != nil {
 		return err

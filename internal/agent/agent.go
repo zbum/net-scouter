@@ -206,7 +206,7 @@ func (a *Agent) pruneCache() {
 }
 
 func (a *Agent) visible(records []flow.Record) []flow.Record {
-	records = flow.CollapseTCPSourcePorts(records)
+	records = flow.ForACL(records)
 	out := make([]flow.Record, 0, len(records))
 	for _, record := range records {
 		if !a.excluded(record) {

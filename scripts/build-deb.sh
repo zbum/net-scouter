@@ -43,24 +43,24 @@ fi
 
 make build-linux "GOARCH=$GOARCH"
 
-image="${DEB_BUILD_IMAGE:-ubuntu:22.04}"
+image="${DEB_BUILD_IMAGE:-net-scouter-deb-build:22.04}"
 platform="${DEB_BUILD_PLATFORM:-linux/amd64}"
+"$root/scripts/ensure-build-image.sh" "$image" "$root/deploy/docker/deb-build.Dockerfile" "$platform"
 echo "building BPF and deb in $image ($platform) for $DEB_ARCH"
 
 docker run --rm -i \
 	--platform "$platform" \
+	-u "$(id -u):$(id -g)" \
+	-e HOME=/tmp \
 	-e "BPF_ARCH=$BPF_ARCH" \
 	-e "DEB_VERSION=$DEB_VERSION" \
 	-e "DEB_ARCH=$DEB_ARCH" \
 	-e "GOARCH=$GOARCH" \
-	-e DEBIAN_FRONTEND=noninteractive \
 	-v "$root:/work" \
 	-w /work \
 	"$image" \
 	bash -s <<'EOS'
 set -euo pipefail
-apt-get update
-apt-get install -y clang make
 make build-bpf "BPF_ARCH=$BPF_ARCH" BPF_CPU=v1
 
 stage=$(mktemp -d)

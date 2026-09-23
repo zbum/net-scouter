@@ -49,7 +49,7 @@ family + protocol + direction + source IP + destination IP + destination port
 + source port (UDP only)
 ```
 
-TCP 출발 포트는 ephemeral이라 ACL 신청에 쓰지 않는다. 집계 키와 `flows` 표시에서 제외하고, 같은 나머지 키의 packet·byte·connection 수는 합친다. UDP 출발 포트는 유지한다.
+ACL 기록은 한 포트만 남긴다. ingress는 도착 포트, 이 호스트가 연 egress는 상대 서비스 포트다. 서버가 클라이언트에게 돌려보내는 패킷과 그 응답의 반대 방향은 기록하지 않는다. 출발 포트는 TCP와 UDP 모두 집계 키와 `flows` 표시에서 빠진다.
 
 같은 키가 다시 관찰되면 새로운 행을 만들지 않고 다음 값을 갱신한다.
 

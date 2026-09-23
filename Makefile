@@ -12,7 +12,8 @@ ROCKY_IMAGE ?= rockylinux:8.10
 .PHONY: build build-linux build-windows build-darwin build-all build-bpf \
 	build-release verify-bpf verify-bpf-load verify-rocky-userspace \
 	test test-go test-static test-ci check checksums clean install uninstall \
-	rpm publish-rpm deb publish-deb
+	rpm publish-rpm deb publish-deb package-images package-image-deb package-image-rpm \
+	build-bpf-image
 
 prefix ?= /usr/local
 sysconfdir ?= /etc
@@ -95,6 +96,27 @@ uninstall:
 		$(DESTDIR)/usr/lib/net-scouter/flow.bpf.o \
 		$(DESTDIR)$(sysconfdir)/net-scouter/net-scouter.yaml.example \
 		$(DESTDIR)$(sysconfdir)/systemd/system/net-scouter.service
+
+DEB_BUILD_IMAGE ?= net-scouter-deb-build:22.04
+RPM_BUILD_IMAGE ?= net-scouter-rpm-build:8
+
+package-images: package-image-deb package-image-rpm
+
+package-image-deb:
+	$(DOCKER) build --platform linux/amd64 -t $(DEB_BUILD_IMAGE) \
+		-f deploy/docker/deb-build.Dockerfile deploy/docker
+
+package-image-rpm:
+	$(DOCKER) build --platform linux/amd64 -t $(RPM_BUILD_IMAGE) \
+		-f deploy/docker/rpm-build.Dockerfile deploy/docker
+
+build-bpf-image: package-image-deb
+	$(DOCKER) run --rm --platform linux/amd64 \
+		-u "$$(id -u):$$(id -g)" \
+		-e HOME=/tmp \
+		-v "$(CURDIR):/work" -w /work \
+		$(DEB_BUILD_IMAGE) \
+		make build-bpf BPF_ARCH=$(BPF_ARCH) BPF_CPU=$(BPF_CPU) BPF_CLANG=clang
 
 rpm:
 	./scripts/build-rpm.sh

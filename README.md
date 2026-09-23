@@ -1,374 +1,66 @@
 # net-scouter
 
-`net-scouter` is a lightweight Linux network-flow discovery agent for identifying real L3/L4 communication dependencies before server replacement, IP migration, or firewall/ACL changes.
+서버를 교체하거나 IP를 바꾸기 전에, 그 서버가 실제로 누구와 어떤 포트로 통신하는지 보는 도구입니다. 방화벽이나 ACL을 고칠 때 필요한 통신 관계를 트래픽에서 찾습니다.
 
-It is designed for production servers: it observes flow metadata only, does not capture packet payloads, and never intentionally drops, modifies, or redirects production traffic.
+패킷 내용은 보지 않습니다. 통신을 막거나 바꾸거나 다른 곳으로 보내지 않습니다. 관찰에 실패해도 기존 트래픽은 그대로 통과합니다.
 
-## Why
+관찰 시간 안에 실제로 발생한 통신만 알 수 있습니다. 그 구간에 쓰지 않은 백업 경로나 월간 배치는 결과에 나오지 않습니다.
 
-Firewall/ACL systems are not always organized around a server-centric view. Before changing a server IP or replacing equipment, operators need to know which systems actually communicate with the target server and which firewall rules may be required after migration.
+설치와 명령은 [INSTALL.md](INSTALL.md), 동작 방식과 개발 절차는 [DEVELOP.md](DEVELOP.md)에 있습니다.
 
-`net-scouter` observes real traffic over a defined period and produces an ACL-oriented dependency view.
+## 결과에서 보는 것
 
-> Observation is evidence, not a guarantee of every possible dependency. Dormant DR paths, monthly jobs, backup paths, or other traffic that does not occur during the observation window cannot be discovered from traffic observation alone.
+한 행은 ACL 후보 하나입니다.
 
-## Goals
+- `ingress`는 상대가 이 서버의 포트로 들어온 접속입니다. `PORT`는 이 서버의 포트입니다.
+- `egress`는 이 서버가 밖으로 연 접속입니다. `PORT`는 상대 서비스 포트입니다.
+- 서버가 클라이언트에게 돌려보내는 패킷과, 상대 서버의 응답은 빠집니다.
+- 출발 포트는 보이지 않습니다. 같은 방향, 같은 주소, 같은 서비스 포트는 한 행으로 합쳐집니다.
+- 기본 화면의 TCP는 연결이 성립한 것만입니다. `127.0.0.1`끼리, 같은 주소끼리의 흐름은 빠집니다.
 
-- Observe actual inbound and outbound L3/L4 flows with minimal production overhead.
-- Support TCP and UDP over IPv4 and IPv6. ICMP is planned separately because it
-  does not have transport ports and therefore is not a 5-tuple flow.
-- Aggregate flows in the kernel instead of forwarding every packet to userspace.
-- Record first/last seen timestamps, packet count, and byte count.
-- Normalize raw flows into an ACL-oriented view.
-- Never capture application payloads.
-- Fail open: observation failure must not affect production traffic.
-- Run on ordinary Linux hosts as well as Kubernetes nodes.
+`CONNECTIONS`는 TCP가 `ESTABLISHED`까지 간 횟수입니다. UDP는 연결 개념이 없어서 `-`입니다. 패킷과 바이트는 그 행으로 합쳐진 누적값입니다.
 
-## Supported baseline
+## 샘플
 
-Initial target platforms:
-
-- Rocky Linux 8.10 / RHEL 8 compatible kernels.
-- Ubuntu 22.04 LTS or newer.
-
-Support is determined primarily by kernel capabilities rather than distro version. The agent should verify at startup that required eBPF/BTF/TC capabilities are available.
-
-The validated Rocky Linux 8.10 environment used during design has a `4.18.0-553.51.1.el8_10.x86_64` kernel with BTF, BPF syscall/JIT, `sched_cls`, LRU hash maps, and the required packet-processing helpers available.
-
-## Architecture
+아래는 `enp2s0`의 주소가 `192.168.31.102`인 서버에서 `sudo net-scouter flows`를 실행했을 때의 형태입니다. 숫자는 읽기 위한 예시입니다.
 
 ```text
-                  Linux host
-                      |
-             network interface
-                      |
-          +-----------+-----------+
-          |                       |
-      TC ingress               TC egress
-          |                       |
-          +-----------+-----------+
-                      |
-             eBPF L3/L4 parser
-                      |
-               BPF LRU hash map
-                      |
-            periodic map snapshot
-                      |
-                  Go agent
-                      |
-          +-----------+-----------+
-          |                       |
-       JSONL                    stdout
-          |
-   future collector/API
+tcp connections: enabled (trace ABI 5.15)
+durable storage: unavailable
+SRC                DST                PROTO  DIR      PORT  FIRST SEEN                 LAST SEEN                  PACKETS  BYTES  CONNECTIONS
+192.168.31.1       192.168.31.102     TCP    ingress  22    2026-09-24T00:06:35+09:00  2026-09-24T00:07:23+09:00  98       8372   1
+106.75.153.103     192.168.31.102     TCP    ingress  22    2026-09-23T23:40:03+09:00  2026-09-23T23:40:03+09:00  5        1336   1
+192.168.31.6       192.168.31.102     TCP    ingress  9091  2026-09-23T23:39:26+09:00  2026-09-23T23:39:26+09:00  6        624    1
+192.168.31.211     224.0.0.251        UDP    ingress  5353  2026-09-24T00:07:23+09:00  2026-09-24T00:07:23+09:00  3        794    -
+192.168.31.102     8.8.8.8            UDP    egress   53    2026-09-23T23:39:15+09:00  2026-09-24T00:07:09+09:00  18       2100   -
+192.168.31.102     192.168.31.1       UDP    egress   53    2026-09-23T23:38:54+09:00  2026-09-23T23:40:04+09:00  80       24000  -
+192.168.31.102     34.120.177.193     TCP    egress   443   2026-09-23T23:37:36+09:00  2026-09-23T23:39:07+09:00  10       668    1
 ```
 
-The first implementation uses TC ingress/egress rather than XDP. The goal is observation and dependency discovery, not packet filtering.
+이 샘플을 ACL로 읽으면 다음과 같습니다.
 
-## Flow model
+- `192.168.31.1`과 `106.75.153.103`은 이 서버의 TCP 22번으로 들어옵니다.
+- `192.168.31.6`은 이 서버의 TCP 9091번으로 들어옵니다.
+- 이 서버는 `8.8.8.8`과 `192.168.31.1`의 UDP 53번을 사용합니다.
+- 이 서버는 `34.120.177.193`의 TCP 443번으로 나갑니다.
+- `224.0.0.251` UDP 5353은 mDNS입니다.
 
-Raw flow key:
+## 자주 쓰는 조회
 
-```text
-family + protocol + direction + src IP + dst IP + src port + dst port
-```
-
-Aggregated value:
-
-```text
-firstSeen
-lastSeen
-packets
-bytes
-connections (TCP only)
-```
-
-Example raw flow:
-
-```text
-10.10.1.20:48321 -> 10.20.1.30:3306 TCP egress
-```
-
-TCP aggregation ignores the ephemeral source port. `flows` does not show it, and packet, byte, and connection counters for the same direction, addresses, and destination port are summed. UDP source ports stay in the key and in the output.
-
-ACL-oriented normalization can later collapse ephemeral client ports:
-
-```text
-OUTBOUND 10.10.1.20 -> 10.20.1.30 TCP/3306
-```
-
-## Safety principles
-
-1. **No payload capture.** Only L3/L4 metadata is observed.
-2. **No packet enforcement.** eBPF programs return `TC_ACT_OK` and do not intentionally drop, redirect, or modify packets.
-3. **Kernel-side aggregation.** High packet rates should not result in one userspace event per packet.
-4. **Bounded state.** Flow state uses an LRU map with a configurable maximum size.
-5. **Fail open.** Parsing/map failures must not interfere with traffic.
-6. **Capability detection.** Do not assume that a kernel version alone implies support, especially on RHEL-family kernels with backported eBPF features.
-
-## Scope
-
-### v0.1
-
-- [x] Linux capability check
-- [x] Interface selection
-- [x] TC ingress classifier
-- [x] TC egress classifier
-- [x] IPv4 parsing
-- [x] IPv6 parsing
-- [x] TCP flows
-- [x] UDP flows
-- [ ] ICMP/ICMPv6 flows
-- [x] Kernel-side LRU flow aggregation
-- [x] firstSeen / lastSeen
-- [x] packet / byte counters
-- [x] TCP established connection counter (Linux 4.18 and 5.15 tracepoint ABI variants)
-- [x] stdout JSONL exporter
-- [ ] ACL-oriented normalization
-- [x] destination exclusion rules
-- [x] systemd unit
-- [ ] Kubernetes DaemonSet example
-
-### Later
-
-- Central collector
-- Existing ACL comparison
-- IP migration report
-- DNS enrichment
-- PID/process attribution
-- Container/Kubernetes workload attribution
-- Web UI
-- Dooray notifications
-
-Process/container attribution is deliberately excluded from v0.1. The first version is a small L3/L4 flow collector.
-
-## Project layout
-
-```text
-net-scouter/
-├── cmd/net-scouter/       CLI entry point
-├── internal/agent/        agent lifecycle
-├── internal/ebpf/         eBPF loader/attach layer
-├── internal/flow/         flow domain model and ACL normalization
-├── internal/exporter/     stdout/JSONL exporters
-├── internal/platform/     kernel capability checks
-├── bpf/                   eBPF C sources and shared definitions
-├── configs/               example configuration
-├── deploy/systemd/        systemd unit
-├── deploy/kubernetes/     DaemonSet example
-├── scripts/               development/runtime checks
-└── Makefile
-```
-
-## Build approach
-
-The userspace agent is Go. The small kernel-side sensor is eBPF C. `cilium/ebpf` loads the separately installed, ahead-of-time compiled eBPF object.
-
-```text
-flow.bpf.c
-    |
-   clang
-    |
-eBPF object
-    |
-flow.bpf.o + net-scouter binary
-```
-
-The kernel program can be compiled on a Linux development host with a clang
-build that includes the BPF target:
+서비스를 띄운 뒤 같은 서버에서 실행합니다. 조회는 root만 할 수 있습니다.
 
 ```bash
-make build-bpf
+sudo net-scouter flows
+sudo net-scouter flows --protocol tcp
+sudo net-scouter flows --protocol udp
+sudo net-scouter status
 ```
 
-It exposes separate TC ingress and egress classifiers. Both are observation-only
-and always return `TC_ACT_OK`; unsupported or malformed packets are ignored.
-IPv4 and IPv6 parsing is bounded by each packet's declared IP length as well as
-the skb boundary. IPv6 jumbograms are deliberately ignored in this version.
-
-`make test` performs Linux-target C syntax checks and verifies the source-level
-safety and aggregation invariants. A real eBPF ELF build still requires a Linux
-development environment (or LLVM installation) whose clang includes the BPF
-backend. Loading the resulting object through the kernel verifier must be part
-of validation on every supported kernel; the syntax checks cannot substitute
-for verifier testing. Linux CI should run `make verify-bpf` and load-test the
-object on each supported kernel baseline.
-
-Packet and byte counters use the atomic add operation supported by the 4.18
-baseline. `first_seen` is the timestamp from the CPU that wins initial map
-insertion. `last_seen` is a best-effort observation timestamp: concurrent CPUs
-may store it out of order. This avoids newer BPF CMPXCHG instructions while
-preserving exact concurrent packet and byte aggregation.
-
-TCP connection counts come from `sock:inet_sock_set_state` transitions to
-`TCP_ESTABLISHED`, not from SYN packet counts. The BPF object contains separate
-raw-context variants for the Linux 4.18 layout (`protocol` u8, address offset
-31) and Linux 5.15 layout (`protocol` u16, address offset 32). The runtime
-loader must inspect tracefs and explicitly attach exactly one matching variant;
-it must never attach both. An unknown ABI disables connection counting while
-packet and byte collection remains available.
-
-## Build and CI
-
-Release artifacts are built once on an Ubuntu amd64 build node and reused on
-all supported systems:
+연결에 실패한 TCP 시도까지 보려면 `--attempts`를 붙입니다. 루프백과 같은 주소끼리의 흐름까지 보려면 `--local`을 붙입니다.
 
 ```bash
-make test-ci
+sudo net-scouter flows --protocol tcp --attempts
+sudo net-scouter flows --local
 ```
 
-This produces a statically linked `dist/net-scouter-linux-amd64`,
-`dist/flow.bpf.o`, and `dist/SHA256SUMS`. `CGO_ENABLED=0` keeps the Go binary
-independent of the build server's libc. The BPF object is not distro-specific;
-kernel acceptance is tested separately on each supported kernel baseline.
-
-The Jenkins pipeline has three deliberately separate responsibilities:
-
-1. An Ubuntu amd64 build node runs tests and creates the release artifacts.
-2. An unprivileged, network-isolated `rockylinux:8.10` container executes the
-   already-built Go binary to check Rocky userspace compatibility.
-3. Optional dedicated Ubuntu 22.04+ and Rocky 8.10+ nodes ask their own kernel
-   verifier to load the BPF object.
-
-Kernel verifier stages are disabled by default. Enable the
-`RUN_KERNEL_VERIFIERS` Jenkins parameter only when both configured node labels
-resolve to disposable or dedicated verifier nodes. Those nodes need `bpftool`,
-a mounted bpffs at `/sys/fs/bpf`, and passwordless sudo for the narrowly scoped
-Jenkins command. `make verify-bpf-load` loads all four programs—the two TC
-classifiers and the two tracepoint ABI variants—confirms their pins, and removes
-the pins immediately. This verifier-only check does not run `tc`, attach a
-program to an interface or tracepoint, or modify network configuration. At
-runtime, only one matching tracepoint ABI variant may be attached.
-
-For a local Rocky userspace check (Docker is required):
-
-```bash
-make build-linux verify-rocky-userspace
-```
-
-This container receives no network, drops all capabilities, and mounts only
-the artifact directory read-only. A successful container check does not replace
-the Rocky kernel verifier gate because containers use the host kernel.
-
-## Configuration
-
-See `configs/net-scouter.yaml`.
-
-The intended configuration model is intentionally small: interfaces, protocol families, aggregation interval/map size, exporter, and exclusions.
-
-Run the current executable slice explicitly:
-
-```bash
-sudo net-scouter run --config /etc/net-scouter/net-scouter.yaml
-```
-
-It loads `flow.bpf.o`, attaches only to the configured interface allowlist,
-selects at most one compatible TCP state tracepoint layout, and emits changed
-rows from periodic cumulative map snapshots as JSON Lines to stdout. Each row
-contains cumulative counters; unchanged rows are not emitted again. Destination CIDRs are excluded when the
-destination matches; workload traffic is excluded only when both endpoints
-match a configured workload CIDR. Internal virtual interfaces are rejected
-unless `allowVirtualInterfaces: true` is explicitly configured.
-Only one process may collect at a time; Linux enforces this with the advisory
-lock `/run/net-scouter.lock`. A pre-existing TC filter collision is reported
-and collection stops rather than replacing an unknown or stale filter.
-
-`flows` and `status` read the running agent through `/run/net-scouter/query.sock`.
-`status` also reads `/run/net-scouter/status.json` when the socket is down, and
-uses the recorded pid to mark that file stale after the process exits. The
-table is the default flow view. `--format json` and `--format jsonl` are both
-available; neither machine format is the sole default while that choice is
-still open. TCP connections are `n/a` or JSON `null` when counting is disabled,
-not numeric zero. UDP has no connection count.
-
-Restarting the agent drops collected flows. Local durable storage is not
-enabled, so there is no restarted history to query.
-Shutdown removes only filters owned by this process and never removes clsact.
-
-## Commands
-
-Initial CLI contract:
-
-```bash
-sudo net-scouter check
-sudo net-scouter run --config /etc/net-scouter/net-scouter.yaml
-net-scouter status
-net-scouter status --format json
-net-scouter flows
-net-scouter flows --format json
-net-scouter flows --format jsonl
-```
-
-`check` reports the host OS, BPF syscall, bpffs, vmlinux BTF, TCP state
-tracepoint format, euid, and kernel config when it is exposed. It fails on an
-unsupported OS or when the BPF syscall is missing. Other gaps are warnings.
-`net-scouter report` is not implemented.
-
-Install the Linux release artifacts, the example config, the BPF object, and
-the systemd unit with:
-
-```bash
-make build-release
-sudo make install
-sudo cp /etc/net-scouter/net-scouter.yaml.example /etc/net-scouter/net-scouter.yaml
-```
-
-Package versions are `0.0.0+UTC timestamp.git`. apt and dnf treat that as newer than the earlier `0+git` packages.
-
-Publish an RPM to the Nexus yum repository `yum-hosted`. Metadata is one
-directory deep, so clients use the `net-scouter/` base URL. Set
-`NEXUS_USER` and `NEXUS_PASS` in the environment. `GOARCH=arm64`
-publishes the aarch64 package; the default is amd64/x86_64.
-
-```bash
-NEXUS_USER=... NEXUS_PASS=... make publish-rpm
-```
-
-On Rocky or RHEL:
-
-```bash
-cat >/etc/yum.repos.d/net-scouter.repo <<'EOF'
-[net-scouter]
-name=net-scouter
-baseurl=https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/
-enabled=1
-gpgcheck=0
-EOF
-dnf install net-scouter
-```
-
-The package is unsigned and does not start the service. Edit
-`/etc/net-scouter/net-scouter.yaml` first. `flows` and `status` can query a
-running agent only after that service is up on a Linux host.
-
-Publish a deb to the Nexus apt repository `apt-hosted`. That repository must
-already exist with distribution `stable`. The same `NEXUS_USER` and
-`NEXUS_PASS` variables are used. `GOARCH=arm64` publishes the arm64 package.
-
-```bash
-NEXUS_USER=... NEXUS_PASS=... make publish-deb
-```
-
-On Ubuntu, add the repository public key and the `stable main` entry:
-
-```bash
-sudo install -d -m 0755 /etc/apt/keyrings
-sudo gpg --dearmor -o /etc/apt/keyrings/manty-apt.gpg < public.gpg.key
-echo 'deb [signed-by=/etc/apt/keyrings/manty-apt.gpg] https://nexus.manty.co.kr/repository/apt-hosted/ stable main' \
-  | sudo tee /etc/apt/sources.list.d/net-scouter.list
-sudo apt update
-sudo apt install net-scouter
-```
-
-Nexus signs the apt metadata, not the deb. This package also does not start
-the service.
-
-## Important limitations
-
-Traffic observation can only report communication that actually occurs during the observation period. For migration work, observed flows should eventually be compared with existing ACLs and supplemented with information such as listening sockets and relevant operational knowledge.
-
-NAT also matters: the address visible to `net-scouter` depends on the observation hook relative to SNAT/DNAT. ACL reporting must ultimately represent the address seen at the firewall enforcement point.
-
-## Development direction
-
-Keep the eBPF C portion deliberately small. Packet parsing and bounded aggregation belong in eBPF; configuration, reporting, normalization, storage, export, and future integrations belong in Go.
+집계는 커널 메모리에만 있습니다. 서비스를 재시작하면 그때까지 모은 행은 사라집니다.

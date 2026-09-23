@@ -183,11 +183,20 @@ static __always_inline void copy_addr(__u8 *dst, const __u8 *src, __u32 length)
         dst[i] = i < length ? src[i] : 0;
 }
 
-/* TCP source ports are ephemeral and are not an ACL identity. */
-static __always_inline void drop_tcp_source_port(struct flow_key *key)
+/* Ephemeral source ports are not an ACL identity. */
+static __always_inline void drop_ephemeral_source_port(struct flow_key *key)
 {
-    if (key->protocol == IPPROTO_TCP)
+    if (key->protocol == IPPROTO_TCP || key->protocol == IPPROTO_UDP)
         key->src_port = 0;
+}
+
+/* A low source port answering a high destination port is the service
+ * sending back to a client. ACL does not track that direction. */
+static __always_inline int reply_to_client(const struct flow_key *key)
+{
+    if (key->src_port == 0 || key->src_port >= 1024 || key->dst_port < 32768)
+        return 0;
+    return 1;
 }
 
 static __always_inline int parse_ports(void *cursor, void *packet_end,
@@ -201,7 +210,6 @@ static __always_inline int parse_ports(void *cursor, void *packet_end,
         return 0;
     key->src_port = ntohs(ports->src);
     key->dst_port = ntohs(ports->dst);
-    drop_tcp_source_port(key);
     return 1;
 }
 
@@ -408,7 +416,7 @@ static __always_inline int count_tcp_connection(struct socket_transition *event)
         return 0;
     }
 
-    drop_tcp_source_port(&key);
+    drop_ephemeral_source_port(&key);
     aggregate_connection(&key);
     return 0;
 }
@@ -494,8 +502,12 @@ static __always_inline int observe(struct __sk_buff *skb, __u8 direction)
 
     key.direction = direction;
     if ((protocol == ETH_P_IP && parse_ipv4(cursor, data_end, &key)) ||
-        (protocol == ETH_P_IPV6 && parse_ipv6(cursor, data_end, &key)))
-        aggregate(&key, skb->len);
+        (protocol == ETH_P_IPV6 && parse_ipv6(cursor, data_end, &key))) {
+        if (!reply_to_client(&key)) {
+            drop_ephemeral_source_port(&key);
+            aggregate(&key, skb->len);
+        }
+    }
     return TC_ACT_OK;
 }
 
