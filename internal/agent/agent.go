@@ -32,11 +32,19 @@ type Agent struct {
 	startedAt      time.Time
 	statusPath     string
 	obs            runtimeObs
+	capture        captureSel
 	mapEntries     int
 	lastSnapshotAt time.Time
 	observedFrom   time.Time
 	observedTo     time.Time
 	lastError      string
+}
+
+type captureSel struct {
+	ipv4 bool
+	ipv6 bool
+	tcp  bool
+	udp  bool
 }
 
 type runtimeObs struct {
@@ -82,6 +90,7 @@ func New(source Snapshotter, output io.Writer, interval time.Duration, maxFlows 
 		previous:     make(map[flowIdentity]cacheEntry),
 		cacheLimit:   int(maxFlows) * 3,
 		startedAt:    time.Now(),
+		capture:      captureSel{ipv4: true, ipv6: true, tcp: true, udp: true},
 		obs: runtimeObs{
 			Destinations:  copyStrings(destinationCIDRs),
 			WorkloadCIDRs: copyStrings(workloadCIDRs),
@@ -209,11 +218,38 @@ func (a *Agent) visible(records []flow.Record) []flow.Record {
 	records = flow.ForACL(records)
 	out := make([]flow.Record, 0, len(records))
 	for _, record := range records {
-		if !a.excluded(record) {
-			out = append(out, record)
+		if !a.allows(record) || a.excluded(record) {
+			continue
 		}
+		out = append(out, record)
 	}
 	return out
+}
+
+func (a *Agent) allows(r flow.Record) bool {
+	addr := r.SrcIP.Unmap()
+	if r.DstIP.Unmap().Is6() {
+		addr = r.DstIP.Unmap()
+	}
+	if addr.Is4() && !a.capture.ipv4 {
+		return false
+	}
+	if addr.Is6() && !a.capture.ipv6 {
+		return false
+	}
+	if r.Protocol == 6 && !a.capture.tcp {
+		return false
+	}
+	if r.Protocol == 17 && !a.capture.udp {
+		return false
+	}
+	return true
+}
+
+func (a *Agent) SetCapture(ipv4, ipv6, tcp, udp bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.capture = captureSel{ipv4, ipv6, tcp, udp}
 }
 
 func (a *Agent) excluded(r flow.Record) bool {

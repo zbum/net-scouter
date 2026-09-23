@@ -63,6 +63,32 @@ func Open(objectPath string, maxFlows uint32) (*Loader, error) {
 	return &Loader{collection: c, flows: c.Maps["flows"]}, nil
 }
 
+func (l *Loader) SetCapture(ipv4, ipv6, tcp, udp bool) error {
+	m := l.collection.Maps["capture_cfg"]
+	if m == nil {
+		return errors.New("BPF object has no capture_cfg map")
+	}
+	value := captureConfig{boolByte(ipv4), boolByte(ipv6), boolByte(tcp), boolByte(udp)}
+	if err := m.Put(uint32(0), value); err != nil {
+		return fmt.Errorf("set capture config: %w", err)
+	}
+	return nil
+}
+
+type captureConfig struct {
+	IPv4 uint8
+	IPv6 uint8
+	TCP  uint8
+	UDP  uint8
+}
+
+func boolByte(value bool) uint8 {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func (l *Loader) AttachTracepoint() (bool, error) {
 	if l.traceAttempted {
 		return false, errors.New("tracepoint attachment already attempted")

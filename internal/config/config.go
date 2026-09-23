@@ -131,8 +131,17 @@ func (c Config) Validate() error {
 	if c.Export.Type != "stdout" || c.Export.Path != "" {
 		return fmt.Errorf("export must use type stdout with no path")
 	}
-	if !enabled(c.Capture.IPv4) || !enabled(c.Capture.IPv6) || !enabled(c.Capture.TCP) || !enabled(c.Capture.UDP) || c.Capture.ICMP == nil || *c.Capture.ICMP {
-		return fmt.Errorf("capture requires ipv4/ipv6/tcp/udp true and icmp false")
+	if c.Capture.IPv4 == nil || c.Capture.IPv6 == nil || c.Capture.TCP == nil || c.Capture.UDP == nil || c.Capture.ICMP == nil {
+		return fmt.Errorf("capture.ipv4, ipv6, tcp, udp, and icmp must be set")
+	}
+	if *c.Capture.ICMP {
+		return fmt.Errorf("capture.icmp must be false")
+	}
+	if !*c.Capture.IPv4 && !*c.Capture.IPv6 {
+		return fmt.Errorf("capture must enable ipv4 or ipv6")
+	}
+	if !*c.Capture.TCP && !*c.Capture.UDP {
+		return fmt.Errorf("capture must enable tcp or udp")
 	}
 	if !enabled(c.Safety.FailOpen) {
 		return fmt.Errorf("safety.failOpen must be true")
