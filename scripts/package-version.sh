@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
-# Print a package version that apt and dnf treat as newer than an older
-# publish. 0.0.0+UTC.git sorts after the earlier 0+git versions.
+# Print the package version. A release branch sets VERSION. Without that
+# file, development builds use 0.0.0+UTC.git so they still sort after 0+git.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
+
+if [[ -f VERSION ]]; then
+	version=$(tr -d '[:space:]' < VERSION)
+	if [[ ! "$version" =~ ^[0-9]+(\.[0-9A-Za-z]+)*$ ]]; then
+		echo "invalid VERSION: $version" >&2
+		exit 1
+	fi
+	printf '%s\n' "$version"
+	exit 0
+fi
 
 hash=unknown
 dirty=""

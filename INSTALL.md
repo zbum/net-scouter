@@ -120,7 +120,7 @@ TCP 연결 집계를 쓸 수 없으면 연결 수는 `0`이 아니라 `n/a` 또�
 
 ## 패키지를 만들 때
 
-버전은 `0.0.0+UTC시각.git해시`입니다. apt와 dnf는 이 형식을 이전의 `0+git` 버전보다 새로운 것으로 봅니다.
+릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.0`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
 
 BPF 컴파일은 로컬 이미지 `net-scouter-deb-build:22.04`와 `net-scouter-rpm-build:8`을 사용합니다. 없으면 한 번 만들고, 이후에는 다시 받지 않습니다. Dockerfile을 바꾸면 `make package-images`로 다시 만듭니다.
 
