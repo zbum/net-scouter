@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source_file="bpf/flow.bpf.c"
+BPF_CLANG="${BPF_CLANG:-clang}"
 classifiers=$(grep -c '^SEC("classifier/' "$source_file")
 act_ok_returns=$(grep -c 'return TC_ACT_OK;' "$source_file")
 
@@ -69,6 +70,6 @@ if [[ $(grep -c 'bpf_map_lookup_elem(&flows, key)' "$source_file") -lt 2 ]]; the
   exit 1
 fi
 
-clang -target x86_64-unknown-linux-gnu -std=gnu11 -fsyntax-only \
+"$BPF_CLANG" -target x86_64-unknown-linux-gnu -std=gnu11 -fsyntax-only \
   -Wall -Wextra -Werror -Ibpf "$source_file"
 echo "eBPF safety invariants: OK"

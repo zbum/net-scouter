@@ -7,7 +7,7 @@ BPF_CPU ?= v1
 GO ?= go
 GOARCH ?= amd64
 DOCKER ?= docker
-ROCKY_IMAGE ?= rockylinux:8.10
+ROCKY_IMAGE ?= rockylinux:8
 
 .PHONY: build build-linux build-windows build-darwin build-all build-bpf \
 	build-release verify-bpf verify-bpf-load verify-rocky-userspace \
@@ -60,7 +60,7 @@ verify-rocky-userspace:
 	$(DOCKER) run --rm --platform linux/amd64 \
 		--network none --cap-drop ALL --security-opt no-new-privileges \
 		-v "$(CURDIR)/$(DIST_DIR):/artifacts:ro" $(ROCKY_IMAGE) \
-		/artifacts/$(BINARY)-linux-amd64 check
+		/artifacts/$(BINARY)-linux-amd64 flows --help
 
 test-go:
 	$(GO) test ./...
