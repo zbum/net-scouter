@@ -3,24 +3,43 @@ package platform
 import (
 	"fmt"
 	"io"
-	"os"
 	"runtime"
+	"strings"
 )
+
+type Probe struct {
+	Name     string
+	Status   string
+	Detail   string
+	Required bool
+}
+
+func (p Probe) Line() string {
+	if p.Detail == "" {
+		return p.Status
+	}
+	return p.Status + " " + p.Detail
+}
 
 func PrintCheck(w io.Writer) error {
 	fmt.Fprintln(w, "Net Scouter Environment Check")
-	fmt.Fprintf(w, "GOOS/GOARCH          %s/%s\n", runtime.GOOS, runtime.GOARCH)
-
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
+	fmt.Fprintf(w, "%-22s %s/%s\n", "GOOS/GOARCH", runtime.GOOS, runtime.GOARCH)
+	probes := collectProbes()
+	for _, probe := range probes {
+		fmt.Fprintf(w, "%-22s %s\n", probe.Name, probe.Line())
 	}
+	return summarize(probes)
+}
 
-	if _, err := os.Stat("/sys/kernel/btf/vmlinux"); err == nil {
-		fmt.Fprintln(w, "BTF                  OK")
-	} else {
-		fmt.Fprintln(w, "BTF                  NOT FOUND")
+func summarize(probes []Probe) error {
+	var missing []string
+	for _, probe := range probes {
+		if probe.Required && probe.Status != "OK" {
+			missing = append(missing, probe.Name)
+		}
 	}
-
-	fmt.Fprintln(w, "eBPF feature probing TODO: implement native capability checks")
-	return nil
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("missing required capabilities: %s", strings.Join(missing, ", "))
 }
