@@ -5,7 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Linux 4.18 has no CAP_BPF. Staying root keeps one unit valid on Rocky 8.10 and Ubuntu 22.04.
 ExecStart=/usr/local/bin/net-scouter run --config /etc/net-scouter/net-scouter.yaml
+RuntimeDirectory=net-scouter
+RuntimeDirectoryMode=0700
+LimitMEMLOCK=infinity
 Restart=on-failure
 RestartSec=5
 

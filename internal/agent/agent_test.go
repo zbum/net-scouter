@@ -43,6 +43,26 @@ func TestRunFiltersDestinationAndSameHostWorkload(t *testing.T) {
 	}
 }
 
+func TestExportCollapsesTCPSourcePorts(t *testing.T) {
+	t.Parallel()
+	src := netip.MustParseAddr("10.0.0.1")
+	dst := netip.MustParseAddr("203.0.113.9")
+	var output bytes.Buffer
+	a, err := New(fakeSnapshotter{records: []flow.Record{
+		{SrcIP: src, DstIP: dst, SrcPort: 40000, DstPort: 443, Protocol: 6, Direction: flow.DirectionEgress, Packets: 1, Bytes: 10, Connections: 1},
+		{SrcIP: src, DstIP: dst, SrcPort: 40001, DstPort: 443, Protocol: 6, Direction: flow.DirectionEgress, Packets: 4, Bytes: 40},
+	}}, &output, time.Hour, 10, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.export(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(output.String(), "\n") != 1 || strings.Contains(output.String(), "srcPort") || !strings.Contains(output.String(), `"packets":5`) {
+		t.Fatalf("output: %s", output.String())
+	}
+}
+
 func TestChangedCacheHandlesResetDisappearanceAndBound(t *testing.T) {
 	t.Parallel()
 	source := &fakeSnapshotter{records: []flow.Record{{SrcIP: netip.MustParseAddr("10.0.0.1"), DstIP: netip.MustParseAddr("203.0.113.1"), Protocol: 6, Direction: 1, Packets: 2}}}

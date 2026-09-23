@@ -21,8 +21,14 @@ pipeline {
             agent { label "${params.BUILD_NODE_LABEL}" }
             steps {
                 checkout scm
-                sh 'make test-ci'
-                sh 'file dist/net-scouter-linux-amd64 dist/flow.bpf.o'
+                sh 'make package-images'
+                sh 'make test'
+                sh 'make build-linux'
+                sh 'make build-bpf-image'
+                sh 'make checksums'
+                sh 'make deb'
+                sh 'make rpm'
+                sh 'file dist/net-scouter-linux-amd64 dist/flow.bpf.o dist/deb/*.deb dist/rpm/*.rpm'
                 stash name: 'linux-amd64-release', includes: 'dist/**,scripts/verify-bpf-load.sh,Makefile', useDefaultExcludes: false
                 archiveArtifacts artifacts: 'dist/**', fingerprint: true
             }
