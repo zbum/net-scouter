@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"errors"
+	"net/netip"
 	"testing"
 
 	"github.com/vishvananda/netlink"
@@ -22,6 +23,21 @@ func TestDetachOwnedRetainsOnlyFailedFilters(t *testing.T) {
 	})
 	if err == nil || len(retained) != 2 || retained[0].Attrs().Handle != 2 || retained[1].Attrs().Handle != 3 {
 		t.Fatalf("retained=%v err=%v", retained, err)
+	}
+}
+
+func TestMakeHostAddressKeyNormalizesIPv4AndIPv6(t *testing.T) {
+	t.Parallel()
+	v4, err := makeHostAddressKey(netip.MustParseAddr("::ffff:192.0.2.10"))
+	if err != nil || v4.Family != 2 || v4.Addr != [16]byte{192, 0, 2, 10} {
+		t.Fatalf("IPv4-mapped key = %+v, %v", v4, err)
+	}
+	v6, err := makeHostAddressKey(netip.MustParseAddr("2001:db8::10"))
+	if err != nil || v6.Family != 10 || v6.Addr != netip.MustParseAddr("2001:db8::10").As16() {
+		t.Fatalf("IPv6 key = %+v, %v", v6, err)
+	}
+	if _, err := makeHostAddressKey(netip.Addr{}); err == nil {
+		t.Fatal("invalid address accepted")
 	}
 }
 

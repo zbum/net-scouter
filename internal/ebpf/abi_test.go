@@ -26,4 +26,7 @@ func TestFlowABILayoutMatchesC(t *testing.T) {
 	if got := unsafe.Offsetof(value.Connections); got != 32 {
 		t.Errorf("FlowValue.Connections offset = %d, want 32", got)
 	}
+	if got := binary.Size(hostAddressKey{}); got != int(hostAddressKeySize) {
+		t.Errorf("host address key binary size = %d, memory size = %d", got, hostAddressKeySize)
+	}
 }

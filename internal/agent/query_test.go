@@ -26,7 +26,7 @@ func TestQueryFiltersFlowsAndReportsCapacity(t *testing.T) {
 		{SrcIP: netip.MustParseAddr("10.1.0.1"), DstIP: netip.MustParseAddr("203.0.113.10"), Protocol: 6, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when.Add(time.Minute), Packets: 8, Bytes: 90, Connections: 2},
 	}}
 	var output bytes.Buffer
-	a, err := New(source, &output, time.Minute, 2, []string{"192.0.2.0/24"}, []string{"10.1.0.0/24"})
+	a, err := New(source, &output, time.Minute, 2, []string{"192.0.2.0/24"}, []string{"10.1.0.0/24"}, []netip.Addr{netip.MustParseAddr("10.1.0.1")})
 	if err != nil {
 		t.Fatal(err)
 	}

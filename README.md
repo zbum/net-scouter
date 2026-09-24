@@ -22,6 +22,8 @@
 
 `CONNECTIONS`는 TCP가 `ESTABLISHED`까지 간 횟수입니다. UDP는 연결 개념이 없어서 `-`입니다. 패킷과 바이트는 그 행으로 합쳐진 누적값입니다.
 
+에이전트는 시작할 때 `interfaces`에 지정한 NIC의 실제 IP를 읽고, 그 IP를 로컬 끝점으로 쓰는 흐름만 커널에서 집계하고 결과에 남깁니다. 따라서 일반 Docker·Kubernetes Pod IP를 쓰는 연결은 CIDR 설정 없이 빠집니다. `hostNetwork` Pod와 Docker host 네트워크 컨테이너는 호스트 IP를 공유하므로 구분할 수 없습니다. NAT 뒤의 workload 패킷이 호스트 IP로 보일 수 있어 TCP `PACKETS`·`BYTES`는 연결 수만큼 엄밀하게 귀속된 수치가 아닐 수 있습니다.
+
 ## 샘플
 
 아래는 `enp2s0`의 주소가 `192.168.31.102`인 서버에서 `sudo net-scouter flows`를 실행했을 때의 형태입니다. 숫자는 읽기 위한 예시입니다.
@@ -55,6 +57,8 @@ sudo net-scouter status
 ```
 
 연결에 실패한 TCP 시도까지 보려면 `--attempts`를 붙입니다. 루프백과 같은 주소끼리의 흐름까지 보려면 `--local`을 붙입니다.
+
+`--attempts`에는 NAT를 거쳐 호스트 IP로 보이는 workload 패킷도 포함될 수 있습니다. TCP 연결 검출을 사용할 수 없을 때 기본 조회에서는 성공 여부를 확인할 수 없는 TCP를 숨기며, 상태와 출력에 해당 오류를 표시합니다.
 
 ```bash
 sudo net-scouter flows --protocol tcp --attempts

@@ -105,12 +105,12 @@ sudo net-scouter flows --format jsonl
 | 옵션 | 기본값 | 의미 |
 |---|---|---|
 | `--protocol` | `tcp` | `tcp`, `udp`, `both` |
-| `--attempts` | 끄기 | 성립하지 않은 TCP 시도도 표시 |
+| `--attempts` | 끄기 | 성립하지 않은 TCP 시도와 packet-only 행도 표시. NAT된 workload 패킷이 포함될 수 있음 |
 | `--local` | 끄기 | 루프백, 출발지와 도착지가 같은 흐름, 설정한 NIC 주소끼리의 흐름도 표시 |
 | `--format` | `table` | `table`, `json`, `jsonl` |
 | `--config` | `/etc/net-scouter/net-scouter.yaml` | NIC 주소를 찾을 설정 파일 |
 
-TCP 연결 집계를 쓸 수 없으면 연결 수는 `0`이 아니라 `n/a` 또는 JSON `null`입니다. 에이전트를 띄우기 전에 이미 연결되어 있던 TCP는 연결 수가 0이라 기본 화면에는 없고, `--attempts`로 볼 수 있습니다.
+에이전트는 선택한 NIC의 IP를 시작할 때 읽습니다. 주소가 없거나 조회에 실패하면 수집을 시작하지 않으므로, IP 변경 후에는 서비스를 재시작하십시오. `status`에서 적용된 `host addresses`를 확인할 수 있습니다. TCP 연결 집계를 쓸 수 없으면 연결 수는 `0`이 아니라 `n/a` 또는 JSON `null`이며, 기본 조회에서는 성공 여부를 확인할 수 없는 TCP를 숨깁니다. 에이전트를 띄우기 전에 이미 연결되어 있던 TCP는 연결 수가 0이라 기본 화면에는 없고, `--attempts`로 볼 수 있습니다.
 
 `net-scouter report`는 아직 없습니다.
 

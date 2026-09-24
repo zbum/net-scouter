@@ -18,15 +18,16 @@ import (
 type Snapshotter interface{ Snapshot() ([]flow.Record, error) }
 
 type Agent struct {
-	source       Snapshotter
-	output       io.Writer
-	interval     time.Duration
-	maxFlows     uint32
-	destinations []netip.Prefix
-	workloads    []netip.Prefix
-	previous     map[flowIdentity]cacheEntry
-	generation   uint64
-	cacheLimit   int
+	source        Snapshotter
+	output        io.Writer
+	interval      time.Duration
+	maxFlows      uint32
+	destinations  []netip.Prefix
+	workloads     []netip.Prefix
+	hostAddresses map[netip.Addr]struct{}
+	previous      map[flowIdentity]cacheEntry
+	generation    uint64
+	cacheLimit    int
 
 	mu             sync.Mutex
 	startedAt      time.Time
@@ -54,6 +55,7 @@ type runtimeObs struct {
 	ConnectionDetail   string
 	Destinations       []string
 	WorkloadCIDRs      []string
+	HostAddresses      []string
 }
 
 type flowIdentity struct {
@@ -71,7 +73,7 @@ type cacheEntry struct {
 	generation uint64
 }
 
-func New(source Snapshotter, output io.Writer, interval time.Duration, maxFlows uint32, destinationCIDRs, workloadCIDRs []string) (*Agent, error) {
+func New(source Snapshotter, output io.Writer, interval time.Duration, maxFlows uint32, destinationCIDRs, workloadCIDRs []string, hostAddrs []netip.Addr) (*Agent, error) {
 	dest, err := parsePrefixes(destinationCIDRs)
 	if err != nil {
 		return nil, fmt.Errorf("destination exclusions: %w", err)
@@ -80,20 +82,38 @@ func New(source Snapshotter, output io.Writer, interval time.Duration, maxFlows 
 	if err != nil {
 		return nil, fmt.Errorf("workload exclusions: %w", err)
 	}
+	if len(hostAddrs) == 0 {
+		return nil, fmt.Errorf("host address scope requires at least one selected interface address")
+	}
+	hostAddresses := make(map[netip.Addr]struct{}, len(hostAddrs))
+	hostAddressStrings := make([]string, 0, len(hostAddrs))
+	for _, addr := range hostAddrs {
+		addr = addr.Unmap()
+		if !addr.IsValid() || addr.IsUnspecified() || addr.IsMulticast() {
+			return nil, fmt.Errorf("invalid host address %q", addr)
+		}
+		if _, exists := hostAddresses[addr]; exists {
+			continue
+		}
+		hostAddresses[addr] = struct{}{}
+		hostAddressStrings = append(hostAddressStrings, addr.String())
+	}
 	return &Agent{
-		source:       source,
-		output:       output,
-		interval:     interval,
-		maxFlows:     maxFlows,
-		destinations: dest,
-		workloads:    work,
-		previous:     make(map[flowIdentity]cacheEntry),
-		cacheLimit:   int(maxFlows) * 3,
-		startedAt:    time.Now(),
-		capture:      captureSel{ipv4: true, ipv6: true, tcp: true, udp: true},
+		source:        source,
+		output:        output,
+		interval:      interval,
+		maxFlows:      maxFlows,
+		destinations:  dest,
+		workloads:     work,
+		hostAddresses: hostAddresses,
+		previous:      make(map[flowIdentity]cacheEntry),
+		cacheLimit:    int(maxFlows) * 3,
+		startedAt:     time.Now(),
+		capture:       captureSel{ipv4: true, ipv6: true, tcp: true, udp: true},
 		obs: runtimeObs{
 			Destinations:  copyStrings(destinationCIDRs),
 			WorkloadCIDRs: copyStrings(workloadCIDRs),
+			HostAddresses: hostAddressStrings,
 		},
 	}, nil
 }
@@ -168,6 +188,9 @@ func (a *Agent) collectExport() ([]flow.Record, error) {
 	a.generation++
 	emit := make([]flow.Record, 0, len(filtered))
 	for _, record := range filtered {
+		if record.Protocol == 6 && (!a.obs.ConnectionsEnabled || record.Connections == 0) {
+			continue
+		}
 		identity := flowIdentity{record.SrcIP, record.DstIP, record.SrcPort, record.DstPort, record.Protocol, record.Direction}
 		current := flowCounters{record.Packets, record.Bytes, record.Connections, record.LastSeen}
 		previous, exists := a.previous[identity]
@@ -218,12 +241,26 @@ func (a *Agent) visible(records []flow.Record) []flow.Record {
 	records = flow.ForACL(records)
 	out := make([]flow.Record, 0, len(records))
 	for _, record := range records {
-		if !a.allows(record) || a.excluded(record) {
+		if !a.allows(record) || !a.fromSelectedHostAddress(record) || a.excluded(record) {
 			continue
 		}
 		out = append(out, record)
 	}
 	return out
+}
+
+func (a *Agent) fromSelectedHostAddress(r flow.Record) bool {
+	var local netip.Addr
+	switch r.Direction {
+	case flow.DirectionEgress:
+		local = r.SrcIP
+	case flow.DirectionIngress:
+		local = r.DstIP
+	default:
+		return false
+	}
+	_, ok := a.hostAddresses[local.Unmap()]
+	return ok
 }
 
 func (a *Agent) allows(r flow.Record) bool {
