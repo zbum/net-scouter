@@ -102,8 +102,8 @@ func TestFilterEstablishedHidesFailedTCPByDefault(t *testing.T) {
 	}
 	unavailable := result
 	unavailable.ConnectionsAvailable = false
-	if got := FilterEstablished(unavailable, false); len(got.Records) != 3 {
-		t.Fatalf("hidden flows while connection counts are unavailable: %+v", got.Records)
+	if got := FilterEstablished(unavailable, false); len(got.Records) != 1 || got.Records[0].Protocol != 17 {
+		t.Fatalf("unverified TCP flows leaked while connection counts are unavailable: %+v", got.Records)
 	}
 }
 

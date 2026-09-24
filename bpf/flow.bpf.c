@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "flow.h"
 
+#ifdef NET_SCOUTER_BPF_HOST_TEST
+#define SEC(name) __attribute__((used))
+#else
 #define SEC(name) __attribute__((section(name), used))
+#endif
 #define __always_inline inline __attribute__((always_inline))
 #define TC_ACT_OK 0
 #define BPF_MAP_TYPE_LRU_HASH 9
 #define BPF_MAP_TYPE_ARRAY 2
+#define BPF_MAP_TYPE_HASH 1
 #define BPF_NOEXIST 1
 #define ETH_P_IP 0x0800
 #define ETH_P_IPV6 0x86dd
@@ -181,6 +186,13 @@ struct bpf_map_def SEC("maps") capture_cfg = {
     .max_entries = 1,
 };
 
+struct bpf_map_def SEC("maps") host_addrs = {
+    .type = BPF_MAP_TYPE_HASH,
+    .key_size = sizeof(struct host_addr_key),
+    .value_size = sizeof(__u8),
+    .max_entries = 256,
+};
+
 static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *)1;
 static long (*bpf_map_update_elem)(void *map, const void *key,
                                    const void *value, __u64 flags) = (void *)2;
@@ -349,6 +361,77 @@ static __always_inline int capture_allowed(__u8 family, __u8 protocol)
     return 1;
 }
 
+static __always_inline int host_address_allowed(const struct flow_key *key)
+{
+    struct host_addr_key local = {.family = key->family};
+    const __u8 *address;
+
+    if (key->direction == FLOW_EGRESS)
+        address = key->src_addr;
+    else if (key->direction == FLOW_INGRESS)
+        address = key->dst_addr;
+    else
+        return 0;
+    copy_addr(local.addr, address, 16);
+    return bpf_map_lookup_elem(&host_addrs, &local) != 0;
+}
+
+static __always_inline int ipv4_mapped(const __u8 *address)
+{
+#pragma clang loop unroll(full)
+    for (int i = 0; i < 10; i++) {
+        if (address[i] != 0)
+            return 0;
+    }
+    return address[10] == 0xff && address[11] == 0xff;
+}
+
+static __always_inline int set_connection_addresses(struct flow_key *key,
+                                                     const struct socket_transition *event)
+{
+    const __u8 *source = event->saddr;
+    const __u8 *destination = event->daddr;
+    __u32 length;
+
+    if (event->family == FLOW_FAMILY_IPV4) {
+        key->family = FLOW_FAMILY_IPV4;
+        length = 4;
+    } else if (event->family == FLOW_FAMILY_IPV6) {
+        int source_mapped = ipv4_mapped(source);
+        int destination_mapped = ipv4_mapped(destination);
+
+        /* Mixed mapped/native endpoints do not define a canonical IPv4 tuple. */
+        if (source_mapped != destination_mapped)
+            return 0;
+        if (source_mapped) {
+            key->family = FLOW_FAMILY_IPV4;
+            source += 12;
+            destination += 12;
+            length = 4;
+        } else {
+            key->family = FLOW_FAMILY_IPV6;
+            length = 16;
+        }
+    } else {
+        return 0;
+    }
+
+    if (key->direction == FLOW_EGRESS) {
+        copy_addr(key->src_addr, source, length);
+        copy_addr(key->dst_addr, destination, length);
+        key->src_port = event->sport;
+        key->dst_port = event->dport;
+    } else if (key->direction == FLOW_INGRESS) {
+        copy_addr(key->src_addr, destination, length);
+        copy_addr(key->dst_addr, source, length);
+        key->src_port = event->dport;
+        key->dst_port = event->sport;
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
 static __always_inline void aggregate(const struct flow_key *key, __u64 bytes)
 {
     struct flow_value *current;
@@ -420,37 +503,12 @@ static __always_inline int count_tcp_connection(struct socket_transition *event)
         return 0;
     }
 
-    if (event->family == FLOW_FAMILY_IPV4) {
-        key.family = FLOW_FAMILY_IPV4;
-        if (key.direction == FLOW_EGRESS) {
-            copy_addr(key.src_addr, event->saddr, 4);
-            copy_addr(key.dst_addr, event->daddr, 4);
-            key.src_port = event->sport;
-            key.dst_port = event->dport;
-        } else {
-            copy_addr(key.src_addr, event->daddr, 4);
-            copy_addr(key.dst_addr, event->saddr, 4);
-            key.src_port = event->dport;
-            key.dst_port = event->sport;
-        }
-    } else if (event->family == FLOW_FAMILY_IPV6) {
-        key.family = FLOW_FAMILY_IPV6;
-        if (key.direction == FLOW_EGRESS) {
-            copy_addr(key.src_addr, event->saddr, 16);
-            copy_addr(key.dst_addr, event->daddr, 16);
-            key.src_port = event->sport;
-            key.dst_port = event->dport;
-        } else {
-            copy_addr(key.src_addr, event->daddr, 16);
-            copy_addr(key.dst_addr, event->saddr, 16);
-            key.src_port = event->dport;
-            key.dst_port = event->sport;
-        }
-    } else {
+    if (!set_connection_addresses(&key, event)) {
         return 0;
     }
 
-    if (!capture_allowed(key.family, key.protocol))
+    if (!capture_allowed(key.family, key.protocol) ||
+        !host_address_allowed(&key))
         return 0;
     drop_ephemeral_source_port(&key);
     aggregate_connection(&key);
@@ -539,7 +597,8 @@ static __always_inline int observe(struct __sk_buff *skb, __u8 direction)
     key.direction = direction;
     if ((protocol == ETH_P_IP && parse_ipv4(cursor, data_end, &key)) ||
         (protocol == ETH_P_IPV6 && parse_ipv6(cursor, data_end, &key))) {
-        if (capture_allowed(key.family, key.protocol) && !reply_to_client(&key)) {
+        if (capture_allowed(key.family, key.protocol) &&
+            host_address_allowed(&key) && !reply_to_client(&key)) {
             drop_ephemeral_source_port(&key);
             aggregate(&key, skb->len);
         }

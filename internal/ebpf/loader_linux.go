@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"time"
 
@@ -51,6 +52,13 @@ func Open(objectPath string, maxFlows uint32) (*Loader, error) {
 		return nil, fmt.Errorf("flows map ABI mismatch: type=%s key=%d value=%d", m.Type, m.KeySize, m.ValueSize)
 	}
 	m.MaxEntries = maxFlows
+	hostMap, ok := spec.Maps["host_addrs"]
+	if !ok {
+		return nil, errors.New("BPF object has no host_addrs map")
+	}
+	if hostMap.Type != cebpf.Hash || hostMap.KeySize != uint32(hostAddressKeySize) || hostMap.ValueSize != 1 {
+		return nil, fmt.Errorf("host_addrs map ABI mismatch: type=%s key=%d value=%d", hostMap.Type, hostMap.KeySize, hostMap.ValueSize)
+	}
 	for _, name := range []string{"observe_ingress", "observe_egress", "tcp_conn_u8", "tcp_conn_u16"} {
 		if spec.Programs[name] == nil {
 			return nil, fmt.Errorf("BPF object has no program %q", name)
@@ -61,6 +69,47 @@ func Open(objectPath string, maxFlows uint32) (*Loader, error) {
 		return nil, fmt.Errorf("load BPF collection: %w", err)
 	}
 	return &Loader{collection: c, flows: c.Maps["flows"]}, nil
+}
+
+// SetHostAddresses limits kernel aggregation to selected interface addresses.
+// It must be called before attaching any program.
+func (l *Loader) SetHostAddresses(addrs []netip.Addr) error {
+	m := l.collection.Maps["host_addrs"]
+	if m == nil {
+		return errors.New("BPF object has no host_addrs map")
+	}
+	if len(addrs) == 0 {
+		return errors.New("host address scope is empty")
+	}
+	if uint32(len(addrs)) > m.MaxEntries() {
+		return fmt.Errorf("%d host addresses exceed BPF map capacity %d", len(addrs), m.MaxEntries())
+	}
+	for _, addr := range addrs {
+		key, err := makeHostAddressKey(addr)
+		if err != nil {
+			return err
+		}
+		if err := m.Put(key, uint8(1)); err != nil {
+			return fmt.Errorf("set host address %s: %w", addr, err)
+		}
+	}
+	return nil
+}
+
+func makeHostAddressKey(addr netip.Addr) (hostAddressKey, error) {
+	addr = addr.Unmap()
+	var key hostAddressKey
+	switch {
+	case addr.Is4():
+		key.Family = 2
+		copy(key.Addr[:], addr.AsSlice())
+	case addr.Is6():
+		key.Family = 10
+		copy(key.Addr[:], addr.AsSlice())
+	default:
+		return hostAddressKey{}, fmt.Errorf("invalid host address %q", addr)
+	}
+	return key, nil
 }
 
 func (l *Loader) SetCapture(ipv4, ipv6, tcp, udp bool) error {

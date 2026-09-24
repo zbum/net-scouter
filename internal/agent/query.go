@@ -155,6 +155,7 @@ func (a *Agent) statusLocked() query.Status {
 		StartedAt:      a.startedAt,
 		LastSnapshotAt: a.lastSnapshotAt,
 		Interfaces:     copyStrings(a.obs.Interfaces),
+		HostAddresses:  copyStrings(a.obs.HostAddresses),
 		Interval:       a.interval.String(),
 		ObservedFrom:   a.observedFrom,
 		ObservedTo:     a.observedTo,

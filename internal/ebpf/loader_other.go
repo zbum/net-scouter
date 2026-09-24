@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"fmt"
+	"net/netip"
 
 	"github.com/example/net-scouter/internal/flow"
 )
@@ -19,6 +20,9 @@ func (l *Loader) AttachTracepoint() (bool, error) {
 func (l *Loader) ConnectionCounting() (bool, string) { return false, "" }
 func (l *Loader) SetCapture(bool, bool, bool, bool) error {
 	return fmt.Errorf("capture configuration requires Linux")
+}
+func (l *Loader) SetHostAddresses([]netip.Addr) error {
+	return fmt.Errorf("host address configuration requires Linux")
 }
 func (l *Loader) AttachTC([]string, bool) error { return fmt.Errorf("TC attachment requires Linux") }
 func (l *Loader) Close() error                  { return nil }
