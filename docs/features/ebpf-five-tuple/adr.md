@@ -8,7 +8,7 @@ status: draft
 authors:
   - jibum.jung@gmail.com
 created: 2026-09-23
-last-updated: 2026-09-23
+last-updated: 2026-09-25
 ---
 
 # ADR: eBPF 5-tuple 수집 아키텍처
@@ -88,7 +88,7 @@ last-updated: 2026-09-23
 
 ## ADR-003 — uplink-only 관찰과 양 endpoint workload CIDR 조건으로 동일 host traffic 제외
 
-**Status:** accepted
+**Status:** superseded
 
 **Context**
 
@@ -350,3 +350,36 @@ TCP flow의 kernel map 키와 조회 결과에서 출발 포트를 제외한다.
 - 서비스 포트가 32768 이상이면 응답 방향과 구분하지 못해 빠질 수 있다.
 - 커널의 낮은 포트 응답 제거는 1024 미만 출발 포트에만 적용된다. 그 외 응답은 조회 시 반대 방향이 있으면 제거한다.
 - BPF object를 다시 배포해야 커널 map에도 반영된다.
+
+---
+
+## ADR-009 — 선택한 NIC의 주소를 로컬 끝점으로 쓰는 통신만 기본 집계
+
+**Status:** accepted
+
+**Context**
+
+ADR-003의 양 endpoint workload CIDR 조건은 Docker와 Kubernetes 네트워크가 바뀔 때마다 운영자가 CIDR을 관리해야 한다. TCP connection을 세는 `inet_sock_set_state` tracepoint는 NIC에 한정되지 않고 host 전체 socket을 관찰하므로, TC를 선택한 물리 NIC에만 붙여도 container 간 연결이 결과에 나타날 수 있다.
+
+**Decision**
+
+에이전트 시작 시 설정된 NIC의 실제 IPv4/IPv6 주소를 읽는다. TC와 TCP tracepoint는 ingress의 목적지 또는 egress의 출발지가 선택한 NIC의 정확한 주소인 flow만 집계한다. 일반 Docker/Kubernetes workload IP를 로컬 끝점으로 쓰는 연결은 상대가 같은 host인지 외부인지에 관계없이 기본 범위에서 제외한다. `workloadCIDRs`는 필요한 환경에서 사용하는 보조 제외 규칙으로 유지한다. NIC 주소가 변경되면 에이전트를 재시작해 주소 집합을 갱신한다.
+
+**Drivers**
+
+- Docker/Kubernetes CIDR 수동 관리 제거
+- 전역 tracepoint에서 발생하는 workload 연결 행 제외
+- 선택한 NIC 주소를 기준으로 서버 자체의 통신 관계 조회
+
+**Alternatives Considered**
+
+- **ADR-003의 양 endpoint workload CIDR만 사용:** 네트워크 변경 시 CIDR 관리가 필요하고, 비어 있으면 전역 tracepoint의 workload 연결이 남는다.
+- **선택한 NIC에 TC만 attach:** TCP tracepoint가 전역으로 실행되어 container socket 연결을 막지 못한다.
+- **network namespace 또는 cgroup 기반 workload 식별:** host 네트워크를 공유하는 workload까지 구별할 수 있으나 이번 결정의 주소 기반 범위를 넘는다.
+
+**Consequences**
+
+- 일반 workload IP를 쓰는 외부↔container/Pod 연결도 기본 집계에서 제외된다.
+- host 네트워크를 공유하는 Pod 또는 container는 호스트 주소를 쓰므로 IP만으로 호스트 프로세스와 구분할 수 없다.
+- NAT 뒤의 workload 패킷은 선택한 NIC에서 호스트 주소로 보일 수 있다. 따라서 TCP connection 존재·횟수는 socket tracepoint를 기준으로 하되 packet·byte 수에는 workload 트래픽이 섞일 수 있다.
+- 주소 조회에 실패하거나 활성 주소가 없으면 수집을 시작하지 않는다. 주소가 바뀌면 재시작이 필요하다.

@@ -8,7 +8,7 @@ status: draft
 authors:
   - jibum.jung@gmail.com
 created: 2026-09-23
-last-updated: 2026-09-23
+last-updated: 2026-09-25
 ---
 
 # PRD: 저부하 서버 5-tuple 수집 및 로컬 조회
@@ -21,12 +21,12 @@ last-updated: 2026-09-23
 
 ## Goals
 
-1. 설치 서버의 IPv4/IPv6 TCP·UDP 통신을 방향성 5-tuple 단위로 중복 제거하여 집계한다.
+1. 선택한 NIC의 실제 IPv4/IPv6 주소를 로컬 끝점으로 쓰는 TCP·UDP 통신을 방향성 5-tuple 단위로 중복 제거하여 집계한다.
 2. 각 flow의 최초·최종 관찰 시각, packet 수, byte 수를 기록한다.
 3. TCP 3-way handshake가 완료되어 로컬 socket이 `TCP_ESTABLISHED` 상태로 전환된 횟수를 connection 수로 기록한다.
 4. packet별 userspace 이벤트를 만들지 않고 bounded kernel map에서 집계하여 서버 성능 영향을 최소화한다.
 5. CIDR 규칙으로 불필요한 flow를 결과에서 제외한다.
-6. 같은 서버 내부 Docker container 또는 Kubernetes Pod 사이의 통신을 결과에서 제외하되, 외부와 container/Pod 사이의 통신은 유지한다.
+6. 일반 Docker container 또는 Kubernetes Pod의 workload IP를 쓰는 통신은 같은 서버 내부와 외부 간 통신 모두 기본 결과에서 제외한다. 별도 workload CIDR 설정은 필수가 아니다.
 7. 중앙 서비스 없이 설치 서버의 CLI에서 수집 결과와 agent 상태를 조회한다.
 8. Rocky Linux 8.10 이상과 Ubuntu 22.04 이상을 지원한다.
 
@@ -61,13 +61,13 @@ firstSeen + lastSeen + packets + bytes + connections(TCP only)
 
 ## Functional Requirements (FR)
 
-- **FR-1 — 관찰 범위:** IPv4/IPv6의 TCP/UDP ingress와 egress flow를 수집한다.
+- **FR-1 — 관찰 범위:** IPv4/IPv6의 TCP/UDP ingress와 egress 중 선택한 NIC의 정확한 IP를 로컬 끝점으로 쓰는 flow를 수집한다.
 - **FR-2 — 중복 집계:** 같은 방향성 5-tuple을 한 항목으로 병합하고 `packets`, `bytes`, `firstSeen`, `lastSeen`을 유지한다.
 - **FR-3 — TCP connection 수:** `inet_sock_set_state`에서 로컬 TCP socket이 `TCP_ESTABLISHED`로 전환되는 이벤트를 5-tuple별로 집계한다.
 - **FR-4 — 저부하 경로:** packet별 데이터를 userspace로 전달하지 않고 kernel map에서 먼저 집계한다. map 크기는 bounded여야 한다.
 - **FR-5 — 안전성:** 모든 packet 관찰 경로는 fail-open이어야 하며 packet을 drop, modify 또는 redirect하지 않는다. payload는 읽거나 저장하지 않는다.
 - **FR-6 — CIDR 제외:** 설정된 CIDR에 해당하는 불필요한 flow를 조회·보존 대상에서 제외할 수 있어야 한다. 정확한 규칙 형식과 적용 시점은 구현 전에 확정한다.
-- **FR-7 — 동일 host workload 제외:** 기본적으로 선택한 uplink interface만 관찰하고 `lo`, `docker0`, CNI bridge, `veth*` 등 내부 virtual interface에는 attach하지 않는다. 추가로 source와 destination이 모두 해당 host의 workload CIDR에 포함되는 flow는 결과에서 제외한다. 한쪽 endpoint만 workload CIDR인 외부↔workload 통신은 유지한다.
+- **FR-7 — host 주소 기준 범위:** 선택한 uplink interface에만 TC를 attach하고, ingress는 목적지, egress는 출발지가 해당 NIC의 정확한 IP인 flow만 집계한다. 전역 TCP tracepoint에도 같은 로컬 끝점 조건을 적용한다. 일반 workload IP 연결은 상대가 외부여도 기본 범위에서 제외하고, `workloadCIDRs`는 보조 제외 규칙으로 유지한다. IP 변경 후에는 재시작하여 주소를 다시 읽는다.
 - **FR-8 — 로컬 조회:** `net-scouter flows`로 집계 결과를 사람이 읽는 표 형태로 조회하고 machine-readable 출력도 제공한다.
 - **FR-9 — 상태 조회:** `net-scouter status`로 실행 상태, attach 대상, 수집 기간, map 포화·누락 가능성과 마지막 오류를 확인할 수 있어야 한다.
 - **FR-10 — 로컬 보존:** 재시작 뒤에도 결과를 조회할 수 있도록 로컬 durable storage가 필요하다. 저장 기술, flush 주기, 보존 기간과 디스크 상한은 별도 승인 전까지 미정이다.
@@ -78,7 +78,7 @@ firstSeen + lastSeen + packets + bytes + connections(TCP only)
 
 - 서버 운영자로서 `net-scouter flows`를 실행해 이 서버와 실제 통신한 상대, protocol/port, 방향, packet·byte·TCP connection 수와 관찰 기간을 확인한다.
 - 서버 운영자로서 CIDR 제외 설정을 적용해 관리망 등 분석에 필요 없는 통신을 결과에서 제거한다.
-- Kubernetes 또는 Docker host 운영자로서 같은 host 내부 workload 간 통신은 숨기고 외부 dependency는 유지한다.
+- Kubernetes 또는 Docker host 운영자로서 NIC 주소를 로컬 끝점으로 쓰는 통신을 보고, workload IP 통신은 CIDR을 일일이 등록하지 않고 기본 결과에서 제외한다.
 - 서버 운영자로서 `net-scouter status`를 실행해 수집기가 정상인지와 결과 누락 가능성이 있는지 판단한다.
 
 ## Acceptance Criteria
@@ -88,7 +88,7 @@ firstSeen + lastSeen + packets + bytes + connections(TCP only)
 3. 성공한 로컬 TCP handshake마다 `connections`가 한 번 증가하고 SYN 재전송 또는 실패한 handshake에는 증가하지 않는다.
 4. UDP 결과에는 TCP connection 수가 적용되지 않는다.
 5. 설정된 제외 CIDR에 해당하는 flow가 결과에서 보이지 않는다.
-6. 같은 host의 container↔container 및 Pod↔Pod 통신은 결과에서 제외되고 외부↔container/Pod 통신은 유지된다.
+6. 선택한 NIC 주소를 로컬 끝점으로 쓰지 않는 container/Pod IP 연결은 상대가 같은 host인지 외부인지와 무관하게 기본 결과에서 제외된다. host 네트워크를 공유하는 workload는 IP만으로 구분하지 않는다.
 7. `net-scouter flows`가 최소한 tuple, direction, first/last seen, packets, bytes, TCP connections를 출력한다.
 8. `net-scouter status`가 실행·attach·수집 상태와 map 포화 또는 누락 가능성을 출력한다.
 9. BPF 프로그램의 모든 분기에서 traffic을 허용하며 payload가 artifact, log 또는 로컬 저장소에 기록되지 않는다.
@@ -106,11 +106,13 @@ firstSeen + lastSeen + packets + bytes + connections(TCP only)
 - `firstSeen`, `lastSeen`, packet 및 byte counter
 - `inet_sock_set_state` 기반 TCP connection counter와 Linux 4.18/5.15
   tracepoint ABI variant
+- 시작 시 선택한 NIC의 주소를 읽어 TC와 TCP tracepoint에 동일한 host 주소
+  조건을 적용. 일반 workload IP 연결은 CIDR 설정 없이 기본 집계에서 제외
 - tracefs format probe, 일치하는 connection ABI variant 하나만 attach,
   기존 qdisc/filter를 유지하는 TC lifecycle
 - kernel map snapshot. packet·byte·connection counter는 같은 map value에 있다
-- 조회와 export 시점의 destination CIDR 제외, 그리고 양 endpoint가 모두
-  workload CIDR일 때만 제외
+- 조회와 export 시점의 destination CIDR 제외, 그리고 보조 규칙으로 양 endpoint가
+  모두 workload CIDR일 때만 제외
 - 실행 중 agent에 대한 `flows`와 `status`. 기본 출력은 표이고, JSON과
   JSON Lines는 명시적 `--format`으로 선택할 수 있다
 - connection counting을 쓸 수 없으면 0이 아니라 사용할 수 없음으로 표시
@@ -120,6 +122,8 @@ firstSeen + lastSeen + packets + bytes + connections(TCP only)
 - systemd unit의 runtime directory와 `make install`
 - 항상 `TC_ACT_OK`를 반환하는 fail-open packet 경로
 - Ubuntu build와 Rocky/Ubuntu 실제 kernel verifier 검증을 분리한 Make/Jenkins 기반
+- host 네트워크를 공유하는 workload는 호스트 프로세스와 IP만으로 구분할 수 없고,
+  NAT된 workload 패킷은 TCP packet·byte 수치에 섞일 수 있음. NIC 주소 변경 후 재시작 필요
 
 남은 1차 범위:
 
@@ -153,8 +157,8 @@ firstSeen + lastSeen + packets + bytes + connections(TCP only)
 
 1. 일반 제외 CIDR이 source 또는 destination 중 하나에 일치하면 제외할지, 방향별 규칙을 지원할지?
 2. CIDR filtering을 kernel 집계 전, local persistence 전, 조회 시점 중 어디에서 적용할지?
-3. local workload CIDR을 수동 설정만으로 받을지, Docker/Kubernetes 설정에서 안전하게 탐지할지?
+3. `workloadCIDRs` 보조 제외 규칙을 위한 Docker/Kubernetes CIDR 자동 탐지가 필요한지?
 4. 로컬 저장 engine, flush 주기, 보존 기간, 최대 디스크 사용량과 오래된 데이터 삭제 정책은 무엇인지?
 5. machine-readable 출력은 JSON 또는 JSON Lines 중 무엇을 기본으로 할지?
 6. 성능 acceptance의 CPU, RSS, throughput 저하와 p95 latency 증가 상한을 얼마로 할지?
-7. TCP socket tuple과 uplink에서 관찰한 NAT 전후 tuple을 1차 버전에서 어떻게 대응시킬지?
+7. NAT 전후 TCP socket tuple과 uplink packet tuple을 대응시켜 packet·byte 수를 해당 socket에 정확히 귀속하는 기능을 후속에 구현할지?
