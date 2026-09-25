@@ -47,6 +47,14 @@ grep -q 'drop_ephemeral_source_port' "$source_file"
 grep -q 'reply_to_client' "$source_file"
 grep -q 'capture_cfg' "$source_file"
 grep -q 'capture_allowed' "$source_file"
+grep -q 'host_address_allowed' "$source_file"
+grep -q 'host_addrs' "$source_file"
+grep -q 'source_mapped != destination_mapped' "$source_file"
+grep -q 'set_connection_addresses(&key, event)' "$source_file"
+if [[ $(grep -c 'host_address_allowed(&key)' "$source_file") -ne 2 ]]; then
+  echo "TC and TCP tracepoint must both use the host address scope" >&2
+  exit 1
+fi
 if [[ $(grep -c 'drop_ephemeral_source_port(' "$source_file") -ne 3 ]]; then
   echo "ephemeral source port must be omitted from packet and connection keys" >&2
   exit 1
@@ -72,4 +80,9 @@ fi
 
 "$BPF_CLANG" -target x86_64-unknown-linux-gnu -std=gnu11 -fsyntax-only \
   -Wall -Wextra -Werror -Ibpf "$source_file"
+address_test=$(mktemp)
+trap 'rm -f "$address_test"' EXIT
+"$BPF_CLANG" -std=gnu11 -O2 -Wall -Wextra -Werror -Ibpf \
+  scripts/test-bpf-addresses.c -o "$address_test"
+"$address_test"
 echo "eBPF safety invariants: OK"

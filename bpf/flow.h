@@ -30,7 +30,13 @@ struct flow_value {
     __u64 connections;
 };
 
+struct host_addr_key {
+    __u8 family;
+    __u8 addr[16];
+};
+
 _Static_assert(sizeof(struct flow_key) == 40, "flow_key ABI size changed");
 _Static_assert(sizeof(struct flow_value) == 40, "flow_value ABI size changed");
+_Static_assert(sizeof(struct host_addr_key) == 17, "host_addr_key ABI size changed");
 
 #endif

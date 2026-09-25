@@ -63,6 +63,9 @@ func FormatStatus(st Status) string {
 	fmt.Fprintf(&b, "started:               %s\n", formatTime(st.StartedAt))
 	fmt.Fprintf(&b, "last snapshot:         %s\n", formatTime(st.LastSnapshotAt))
 	fmt.Fprintf(&b, "interfaces:            %s\n", joinOrNone(st.Interfaces))
+	if len(st.HostAddresses) > 0 {
+		fmt.Fprintf(&b, "host addresses:        %s\n", joinOrNone(st.HostAddresses))
+	}
 	if st.Interval != "" {
 		fmt.Fprintf(&b, "interval:              %s\n", st.Interval)
 	}
@@ -112,12 +115,12 @@ func FilterProtocol(result FlowsResult, protocol string) (FlowsResult, error) {
 }
 
 func FilterEstablished(result FlowsResult, includeAttempts bool) FlowsResult {
-	if includeAttempts || !result.ConnectionsAvailable {
+	if includeAttempts {
 		return result
 	}
 	filtered := make([]FlowView, 0, len(result.Records))
 	for _, record := range result.Records {
-		if record.Protocol == 6 && (record.Connections == nil || *record.Connections == 0) {
+		if record.Protocol == 6 && (!result.ConnectionsAvailable || record.Connections == nil || *record.Connections == 0) {
 			continue
 		}
 		filtered = append(filtered, record)

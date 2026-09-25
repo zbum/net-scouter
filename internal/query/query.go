@@ -42,6 +42,7 @@ type Status struct {
 	StartedAt      time.Time        `json:"startedAt,omitempty"`
 	LastSnapshotAt time.Time        `json:"lastSnapshotAt,omitempty"`
 	Interfaces     []string         `json:"interfaces"`
+	HostAddresses  []string         `json:"hostAddresses,omitempty"`
 	Interval       string           `json:"interval,omitempty"`
 	ObservedFrom   time.Time        `json:"observedFrom,omitempty"`
 	ObservedTo     time.Time        `json:"observedTo,omitempty"`

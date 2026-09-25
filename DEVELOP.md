@@ -49,7 +49,7 @@
 
 첫 구현은 XDP가 아니라 TC ingress/egress다. 목적은 관찰이지 패킷 필터링이 아니다.
 
-Go 에이전트가 오브젝트를 읽고, 설정한 인터페이스에만 붙인다. TCP 연결 수는 `sock:inet_sock_set_state`의 `TCP_ESTABLISHED` 전이로 센다. tracefs format을 읽어 Linux 4.18(`protocol` u8, 주소 offset 31)과 5.15(`protocol` u16, 주소 offset 32) 중 맞는 variant 하나만 붙인다. 둘 다 붙이지 않는다. ABI를 모르면 연결 수만 끄고 패킷과 바이트 수집은 계속한다.
+Go 에이전트가 오브젝트를 읽고, 설정한 인터페이스에만 붙인다. 시작 시 선택한 모든 NIC의 활성 IP family 주소를 조회해 BPF `host_addrs` map에 넣는다. TC와 TCP tracepoint는 로컬 끝점이 이 주소 집합에 속하는 흐름만 집계한다. 선택한 NIC를 읽을 수 없거나 활성 family 주소가 전혀 없으면 수집을 시작하지 않는다. 이미 붙인 TC 자원은 종료 경로에서 정리되며 패킷은 언제나 통과한다. IP를 바꾼 뒤에는 에이전트를 재시작해 주소 집합을 다시 읽어야 한다. TCP 연결 수는 `sock:inet_sock_set_state`의 `TCP_ESTABLISHED` 전이로 센다. tracefs format을 읽어 Linux 4.18(`protocol` u8, 주소 offset 31)과 5.15(`protocol` u16, 주소 offset 32) 중 맞는 variant 하나만 붙인다. 둘 다 붙이지 않는다. ABI를 모르면 연결 수만 끄고 패킷과 바이트 수집은 계속하지만, 기본 TCP 결과와 stdout export는 성공 여부가 확인되지 않은 행을 숨긴다.
 
 집계 맵은 `BPF_MAP_TYPE_LRU_HASH`다. 기본 `maxFlows`는 65536이고 시작 때 그 크기만큼 잡는다. 키와 값을 합쳐 항목당 약 150바이트 안쪽이라 전체는 10MB 안팎이다. 꽉 차면 가장 오래 안 보인 항목을 버린다. 맵은 프로세스와 함께 사라진다. 파일이나 DBMS에 흐름을 남기지 않는다. 이 저장소 선택은 ADR-004가 승인되기 전에는 구현하지 않는다.
 
@@ -77,7 +77,8 @@ protocol + direction + src IP + dst IP + service port
 - 이 호스트가 연 egress의 서비스 포트는 상대 도착 포트다.
 - TCP와 UDP 출발 포트는 키와 표시에서 뺀다.
 - 서버가 클라이언트에게 보내는 응답과, 그 반대 방향의 응답은 기록하지 않는다. 목적지 포트가 32768 이상이고 반대 방향에 더 낮은 서비스 포트가 있으면 응답으로 본다. 커널은 출발 포트가 1024 미만이고 목적지 포트가 32768 이상인 패킷만 응답으로 건너뛴다.
-- 기본 `flows`는 TCP `connections > 0`만 보여 준다. `--attempts`가 성립 실패와, 에이전트 시작 전에 이미 연결된 TCP를 포함한다. UDP는 항상 포함한다.
+- ingress는 목적지 IP, egress는 출발지 IP가 선택한 NIC의 정확한 주소일 때만 결과에 남긴다. Docker/Kubernetes workload IP를 쓰는 TCP socket은 자동으로 빠진다. 다중 NIC와 IPv4/IPv6를 함께 지원한다. 이 필터는 `--local`로 해제되지 않는다.
+- 기본 `flows`와 stdout export는 TCP `connections > 0`만 보여 준다. 연결 검출을 쓸 수 없으면 기본 TCP 결과는 비어 있다. `--attempts`는 TC 패킷만 관찰된 행도 표시한다. UDP는 항상 포함한다.
 - 출발지와 도착지가 같거나, 둘 다 루프백이거나, 둘 다 설정한 NIC 주소이면 기본 조회에서 뺀다. `--local`로 본다.
 
 예시:
@@ -89,7 +90,7 @@ protocol + direction + src IP + dst IP + service port
 
 패킷과 바이트는 4.18에서 되는 atomic add를 쓴다. `first_seen`은 맵에 처음 넣은 CPU의 시각이다. `last_seen`은 동시 CPU에서 순서가 바뀔 수 있는 best-effort다. 더 새 BPF CMPXCHG는 쓰지 않는다.
 
-NAT가 있으면 관찰 위치가 SNAT/DNAT 앞인지 뒤인지에 따라 주소가 달라진다. 서로 다른 tuple을 하나의 연결로 합치지 않는다.
+NAT가 있으면 관찰 위치가 SNAT/DNAT 앞인지 뒤인지에 따라 주소가 달라진다. 호스트 주소로 SNAT된 workload 패킷은 `--attempts`에 나타날 수 있고, 같은 집계 키를 쓰는 호스트 연결의 packet/byte counter와 섞일 수도 있다. 따라서 기본 TCP의 연결 존재·횟수는 socket tracepoint로 확인하지만 packet/byte 수를 해당 호스트 socket에 엄밀하게 귀속하지는 않는다. host 네트워크를 공유하는 Pod/컨테이너는 IP만으로 호스트 프로세스와 구별할 수 없다.
 
 ## 안전 원칙
 
@@ -210,7 +211,7 @@ NEXUS_USER=... NEXUS_PASS=... make publish-deb
 NEXUS_USER=... NEXUS_PASS=... make publish-rpm
 ```
 
-릴리스 버전은 루트 `VERSION`이다. `release/<version>` 브랜치에서만 올리고, 그 브랜치를 `main`과 `develop`에 `--no-ff`로 머지한 뒤 `v<version>` 태그를 `main`에 단다. 현재 릴리스는 `0.1.3`이다. `VERSION`이 없으면 `scripts/package-version.sh`가 개발용 `0.0.0+UTC시각.git해시`를 내며, 작업 트리가 더러우면 `.dirty`가 붙는다. apt와 dnf는 이 개발 버전도 이전 `0+git` 패키지보다 새 것으로 정렬한다.
+릴리스 버전은 루트 `VERSION`이다. `release/<version>` 브랜치에서만 올리고, 그 브랜치를 `main`과 `develop`에 `--no-ff`로 머지한 뒤 `v<version>` 태그를 `main`에 단다. 현재 릴리스는 `0.1.4`이다. `VERSION`이 없으면 `scripts/package-version.sh`가 개발용 `0.0.0+UTC시각.git해시`를 내며, 작업 트리가 더러우면 `.dirty`가 붙는다. apt와 dnf는 이 개발 버전도 이전 `0+git` 패키지보다 새 것으로 정렬한다.
 
 yum은 `https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/`에 PUT한다. repodata depth는 1이다. apt는 `apt-hosted`에 컴포넌트 API로 POST한다. Distribution이 `stable`이 아니면 `dists/stable/.../Packages`에 나타나지 않는다. Nexus는 apt 메타데이터만 서명하고 deb 파일 자체는 서명하지 않는다.
 

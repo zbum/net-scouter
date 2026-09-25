@@ -105,12 +105,12 @@ sudo net-scouter flows --format jsonl
 | 옵션 | 기본값 | 의미 |
 |---|---|---|
 | `--protocol` | `tcp` | `tcp`, `udp`, `both` |
-| `--attempts` | 끄기 | 성립하지 않은 TCP 시도도 표시 |
+| `--attempts` | 끄기 | 성립하지 않은 TCP 시도와 packet-only 행도 표시. NAT된 workload 패킷이 포함될 수 있음 |
 | `--local` | 끄기 | 루프백, 출발지와 도착지가 같은 흐름, 설정한 NIC 주소끼리의 흐름도 표시 |
 | `--format` | `table` | `table`, `json`, `jsonl` |
 | `--config` | `/etc/net-scouter/net-scouter.yaml` | NIC 주소를 찾을 설정 파일 |
 
-TCP 연결 집계를 쓸 수 없으면 연결 수는 `0`이 아니라 `n/a` 또는 JSON `null`입니다. 에이전트를 띄우기 전에 이미 연결되어 있던 TCP는 연결 수가 0이라 기본 화면에는 없고, `--attempts`로 볼 수 있습니다.
+에이전트는 선택한 NIC의 IP를 시작할 때 읽습니다. 주소가 없거나 조회에 실패하면 수집을 시작하지 않으므로, IP 변경 후에는 서비스를 재시작하십시오. `status`에서 적용된 `host addresses`를 확인할 수 있습니다. TCP 연결 집계를 쓸 수 없으면 연결 수는 `0`이 아니라 `n/a` 또는 JSON `null`이며, 기본 조회에서는 성공 여부를 확인할 수 없는 TCP를 숨깁니다. 에이전트를 띄우기 전에 이미 연결되어 있던 TCP는 연결 수가 0이라 기본 화면에는 없고, `--attempts`로 볼 수 있습니다.
 
 `net-scouter report`는 아직 없습니다.
 
@@ -122,7 +122,7 @@ TCP 연결 집계를 쓸 수 없으면 연결 수는 `0`이 아니라 `n/a` 또�
 
 ## 패키지를 만들 때
 
-릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.3`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
+릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.4`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
 
 BPF 컴파일은 로컬 이미지 `net-scouter-deb-build:22.04`와 `net-scouter-rpm-build:8`을 사용합니다. 없으면 한 번 만들고, 이후에는 다시 받지 않습니다. Dockerfile을 바꾸면 `make package-images`로 다시 만듭니다.
 

@@ -24,9 +24,15 @@ type FlowValue struct {
 	Connections uint64
 }
 
+type hostAddressKey struct {
+	Family uint8
+	Addr   [16]byte
+}
+
 const (
-	FlowKeySize   = unsafe.Sizeof(FlowKey{})
-	FlowValueSize = unsafe.Sizeof(FlowValue{})
+	FlowKeySize        = unsafe.Sizeof(FlowKey{})
+	FlowValueSize      = unsafe.Sizeof(FlowValue{})
+	hostAddressKeySize = unsafe.Sizeof(hostAddressKey{})
 )
 
 // These paired declarations fail compilation if either ABI size changes.
@@ -35,4 +41,6 @@ var (
 	_ [FlowKeySize - 40]byte
 	_ [40 - FlowValueSize]byte
 	_ [FlowValueSize - 40]byte
+	_ [17 - hostAddressKeySize]byte
+	_ [hostAddressKeySize - 17]byte
 )

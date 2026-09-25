@@ -70,6 +70,10 @@ func run(args []string) (runErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	hostAddrs, err := agent.ResolveHostAddresses(cfg.Interfaces, *cfg.Capture.IPv4, *cfg.Capture.IPv6)
+	if err != nil {
+		return err
+	}
 	instanceLock, err := agent.AcquireInstanceLock("/run/net-scouter.lock")
 	if err != nil {
 		return err
@@ -80,6 +84,9 @@ func run(args []string) (runErr error) {
 		return err
 	}
 	defer func() { runErr = errors.Join(runErr, l.Close()) }()
+	if err := l.SetHostAddresses(hostAddrs); err != nil {
+		return err
+	}
 	if err := l.SetCapture(*cfg.Capture.IPv4, *cfg.Capture.IPv6, *cfg.Capture.TCP, *cfg.Capture.UDP); err != nil {
 		return err
 	}
@@ -105,7 +112,7 @@ func run(args []string) (runErr error) {
 		detail = query.ConnectionABIUnavailable
 		fmt.Fprintln(os.Stderr, "warning: TCP connection counting disabled:", detail)
 	}
-	a, err := agent.New(l, os.Stdout, cfg.Aggregation.Interval, cfg.Aggregation.MaxFlows, cfg.Exclude.Destinations, cfg.Exclude.WorkloadCIDRs)
+	a, err := agent.New(l, os.Stdout, cfg.Aggregation.Interval, cfg.Aggregation.MaxFlows, cfg.Exclude.Destinations, cfg.Exclude.WorkloadCIDRs, hostAddrs)
 	if err != nil {
 		return err
 	}
@@ -176,6 +183,9 @@ func flowsCmd(args []string) error {
 	result, err = query.FilterProtocol(result, *protocol)
 	if err != nil {
 		return err
+	}
+	if *attempts && *protocol != "udp" {
+		fmt.Fprintln(os.Stderr, "warning: --attempts includes packet-only NIC flows; NATed container traffic may use the host address")
 	}
 	result = query.FilterEstablished(result, *attempts)
 	result = query.FilterLocal(result, *includeLocal, configuredNICAddrs(*configPath))

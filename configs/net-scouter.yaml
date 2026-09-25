@@ -1,6 +1,9 @@
 interfaces:
   - eth0
 
+# Results include flows whose local endpoint uses an address assigned to these
+# interfaces at agent startup. Restart the agent after changing NIC addresses.
+
 # Required only when the object is not installed at this path.
 objectPath: /usr/lib/net-scouter/flow.bpf.o
 allowVirtualInterfaces: false
