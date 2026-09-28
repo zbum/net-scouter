@@ -41,6 +41,17 @@
 - 비정상 종료 시 마지막 성공 flush 이후의 flow는 유실될 수 있다.
 - 실제 Rocky Linux와 Ubuntu kernel에서 verifier, 운영 부하 및 강제 전원 장애 시험이 필요하다.
 
+## [0.1.5] - 2026-09-28
+
+### Fixed
+
+- IPv4/IPv6 파서의 가변 패킷 포인터 연산을 `bpf_skb_load_bytes`와 길이 검사로 교체하여 kernel verifier의 프로그램 load 거부를 수정했다.
+- BPF 프로그램 load 실패 시 verifier log 전체를 출력하도록 진단 정보를 보강했다.
+
+### Verification
+
+- Go 테스트, parser 회귀 테스트, 플랫폼별 빌드와 Ubuntu 6.8 kernel 실행을 검증했고 사용자 Ubuntu 서버에서도 정상 실행을 확인했다.
+
 ## [0.1.4] - 2026-09-25
 
 - 선택한 물리 NIC 주소를 로컬 endpoint로 사용하는 flow만 기본 집계하도록 변경했다.
