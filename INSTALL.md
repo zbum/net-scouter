@@ -1,5 +1,18 @@
 # 설치와 사용
 
+## 수정 빌드 적용 및 로그 확인
+
+바이너리와 `/usr/lib/net-scouter/flow.bpf.o`를 함께 교체해야 BPF 수정이 적용됩니다. `make build-all`은 deb 패키지를 갱신하지 않습니다. 같은 릴리스의 수정 패키지는 `DEB_REVISION=2 make deb`처럼 revision을 지정해 새로 빌드하십시오. 실제 버전과 파일 경로는 `dist/deb/latest.env`에서 확인합니다.
+
+```bash
+sudo apt install ./net-scouter_0.1.4-2_amd64.deb
+sudo systemctl restart net-scouter
+sudo net-scouter status
+sudo journalctl -u net-scouter -n 100 --no-pager
+```
+
+파일명은 생성된 패키지에 맞춰 바꾸십시오. 같은 버전을 재설치할 때는 `apt install --reinstall`을 사용합니다. 서비스가 이전 직접 설치본을 실행하는지 확인하려면 `systemctl show net-scouter -p ExecStart -p FragmentPath`를 실행합니다. deb의 실행 파일은 `/usr/bin/net-scouter`입니다. BPF verifier 오류가 나면 수정된 바이너리가 출력하는 전체 로그와 `uname -r` 결과를 함께 확인하십시오.
+
 Rocky Linux 8.10 / RHEL 8 계열과 Ubuntu 22.04 이상을 대상으로 합니다. 배포판 버전보다 커널의 eBPF, BTF, TC 기능이 중요합니다. 패키지는 서비스를 자동으로 시작하지 않습니다.
 
 ## Ubuntu

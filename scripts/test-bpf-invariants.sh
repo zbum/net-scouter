@@ -59,14 +59,16 @@ if [[ $(grep -c 'drop_ephemeral_source_port(' "$source_file") -ne 3 ]]; then
   echo "ephemeral source port must be omitted from packet and connection keys" >&2
   exit 1
 fi
-grep -q 'parse_ports(cursor + header_length, packet_end, data_end' "$source_file"
-grep -q 'parse_ports(cursor, packet_end, data_end' "$source_file"
-grep -q '(void \*)(ports + 1) > packet_end' "$source_file"
-grep -q '(void \*)(ports + 1) > data_end' "$source_file"
-grep -q '(void \*)(fragment + 1) > packet_end' "$source_file"
-grep -q '(void \*)(fragment + 1) > data_end' "$source_file"
-grep -q '(void \*)(ext + 1) > packet_end' "$source_file"
-grep -q '(void \*)(ext + 1) > data_end' "$source_file"
+grep -q 'bpf_skb_load_bytes' "$source_file"
+grep -q 'parse_ports(skb, network_offset + header_length' "$source_file"
+grep -q 'parse_ports(skb, offset, remaining' "$source_file"
+grep -q 'remaining < sizeof(ports)' "$source_file"
+grep -q 'remaining < sizeof(fragment)' "$source_file"
+grep -q 'remaining < sizeof(ext)' "$source_file"
+if grep -Eq 'cursor \+ (total_length|payload_length|length)|cursor \+= length' "$source_file"; then
+  echo "packet pointers must not use packet-derived variable lengths" >&2
+  exit 1
+fi
 if grep -Eq '__sync_(bool|val)_compare_and_swap|cmpxchg|-mcpu=v3' "$source_file" Makefile; then
   echo "4.18 baseline must not depend on BPF CMPXCHG or ISA v3" >&2
   exit 1

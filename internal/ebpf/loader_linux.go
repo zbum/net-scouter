@@ -66,6 +66,10 @@ func Open(objectPath string, maxFlows uint32) (*Loader, error) {
 	}
 	c, err := cebpf.NewCollection(spec)
 	if err != nil {
+		var verifierErr *cebpf.VerifierError
+		if errors.As(err, &verifierErr) {
+			return nil, fmt.Errorf("load BPF collection: %+v", verifierErr)
+		}
 		return nil, fmt.Errorf("load BPF collection: %w", err)
 	}
 	return &Loader{collection: c, flows: c.Maps["flows"]}, nil
