@@ -2,7 +2,7 @@ package exporter
 
 import (
 	"context"
-	"github.com/example/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/flow"
 )
 
 type Exporter interface {

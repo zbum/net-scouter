@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/example/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/flow"
 )
 
 const (
@@ -18,9 +18,14 @@ const (
 	DefaultSocketPath        = "/run/net-scouter/query.sock"
 	DefaultStatusPath        = "/run/net-scouter/status.json"
 	DurableUnavailable       = "unavailable"
-	DurableReason            = "storage engine, flush interval, and retention are not approved yet"
+	DurableReady             = "ready"
+	DurableDisabled          = "disabled"
+	DurableDegraded          = "degraded"
+	DurableReason            = "persistent mode is not enabled"
 	ConnectionABIUnavailable = "unknown or unavailable tracepoint ABI"
 )
+
+var ErrAgentUnavailable = errors.New("agent query socket unavailable")
 
 type Request struct {
 	Cmd string `json:"cmd"`
@@ -34,24 +39,50 @@ type Response struct {
 }
 
 type Status struct {
-	Live           bool             `json:"live"`
-	Stale          bool             `json:"stale"`
-	Running        bool             `json:"running"`
-	Source         string           `json:"source"`
-	PID            int              `json:"pid,omitempty"`
-	StartedAt      time.Time        `json:"startedAt,omitempty"`
-	LastSnapshotAt time.Time        `json:"lastSnapshotAt,omitempty"`
-	Interfaces     []string         `json:"interfaces"`
-	HostAddresses  []string         `json:"hostAddresses,omitempty"`
-	Interval       string           `json:"interval,omitempty"`
-	ObservedFrom   time.Time        `json:"observedFrom,omitempty"`
-	ObservedTo     time.Time        `json:"observedTo,omitempty"`
-	Map            MapStatus        `json:"map"`
-	Connections    ConnectionStatus `json:"connections"`
-	Exclude        ExcludeStatus    `json:"exclude"`
-	DurableStorage string           `json:"durableStorage"`
-	DurableReason  string           `json:"durableStorageReason"`
-	LastError      string           `json:"lastError,omitempty"`
+	Mode               string           `json:"mode"`
+	Live               bool             `json:"live"`
+	Stale              bool             `json:"stale"`
+	Running            bool             `json:"running"`
+	Source             string           `json:"source"`
+	PID                int              `json:"pid,omitempty"`
+	StartedAt          time.Time        `json:"startedAt,omitempty"`
+	LastSnapshotAt     time.Time        `json:"lastSnapshotAt,omitempty"`
+	Interfaces         []string         `json:"interfaces"`
+	HostAddresses      []string         `json:"hostAddresses,omitempty"`
+	Interval           string           `json:"interval,omitempty"`
+	ObservedFrom       time.Time        `json:"observedFrom,omitempty"`
+	ObservedTo         time.Time        `json:"observedTo,omitempty"`
+	Map                MapStatus        `json:"map"`
+	Connections        ConnectionStatus `json:"connections"`
+	Exclude            ExcludeStatus    `json:"exclude"`
+	Storage            StorageStatus    `json:"storage"`
+	Exporter           ExporterStatus   `json:"exporter"`
+	DurableStorage     string           `json:"durableStorage"`
+	DurableReason      string           `json:"durableStorageReason"`
+	MemoryEvictedTotal uint64           `json:"memoryEvictedTotal"`
+	LastError          string           `json:"lastError,omitempty"`
+}
+
+type StorageStatus struct {
+	Path         string    `json:"path,omitempty"`
+	Schema       uint32    `json:"schema,omitempty"`
+	LastFlush    time.Time `json:"lastFlush,omitempty"`
+	Entries      int       `json:"entries"`
+	FileBytes    int64     `json:"fileBytes"`
+	MaxEntries   int       `json:"maxEntries"`
+	MaxBytes     int64     `json:"maxBytes"`
+	OverMaxBytes bool      `json:"overMaxBytes"`
+	Retention    string    `json:"retention,omitempty"`
+	ExpiredTotal uint64    `json:"expiredTotal"`
+	EvictedTotal uint64    `json:"evictedTotal"`
+	Error        string    `json:"error,omitempty"`
+}
+
+type ExporterStatus struct {
+	Listen         string    `json:"listen,omitempty"`
+	Published      int       `json:"publishedFlows"`
+	Omitted        int       `json:"omittedFlows"`
+	LastCollection time.Time `json:"lastCollection,omitempty"`
 }
 
 type MapStatus struct {
@@ -68,8 +99,15 @@ type ConnectionStatus struct {
 }
 
 type ExcludeStatus struct {
-	Destinations  []string `json:"destinations"`
-	WorkloadCIDRs []string `json:"workloadCIDRs"`
+	Destinations  []string            `json:"destinations"`
+	WorkloadCIDRs []string            `json:"workloadCIDRs"`
+	Ingress       DirectionExclusions `json:"ingress"`
+	Egress        DirectionExclusions `json:"egress"`
+}
+
+type DirectionExclusions struct {
+	Sources      []string `json:"sources"`
+	Destinations []string `json:"destinations"`
 }
 
 type FlowView struct {
@@ -87,11 +125,12 @@ type FlowView struct {
 }
 
 type FlowsResult struct {
-	ConnectionsAvailable bool       `json:"connectionsAvailable"`
-	ConnectionABI        string     `json:"connectionABI,omitempty"`
-	ConnectionDetail     string     `json:"connectionDetail,omitempty"`
-	DurableStorage       string     `json:"durableStorage"`
-	Records              []FlowView `json:"records"`
+	ConnectionsAvailable  bool       `json:"connectionsAvailable"`
+	HistoricalConnections bool       `json:"historicalConnections,omitempty"`
+	ConnectionABI         string     `json:"connectionABI,omitempty"`
+	ConnectionDetail      string     `json:"connectionDetail,omitempty"`
+	DurableStorage        string     `json:"durableStorage"`
+	Records               []FlowView `json:"records"`
 }
 
 func NewFlowView(r flow.Record, connectionsAvailable bool) FlowView {
@@ -228,11 +267,19 @@ func LoadStatus(socketPath, filePath string) (Status, error) {
 }
 
 func LoadFlows(socketPath string) (FlowsResult, error) {
+	return loadFlows(socketPath, "flows")
+}
+
+func LoadFlowAttempts(socketPath string) (FlowsResult, error) {
+	return loadFlows(socketPath, "flows_attempts")
+}
+
+func loadFlows(socketPath, command string) (FlowsResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	resp, err := Call(ctx, socketPath, Request{Cmd: "flows"})
+	resp, err := Call(ctx, socketPath, Request{Cmd: command})
 	if err != nil {
-		return FlowsResult{}, fmt.Errorf("agent is not accepting queries on %s: %w; live flows require a running collector, and restarted history is not available because durable storage is not enabled", socketPath, err)
+		return FlowsResult{}, fmt.Errorf("%w on %s: %v", ErrAgentUnavailable, socketPath, err)
 	}
 	if !resp.OK || resp.Flows == nil {
 		if resp.Error == "" {
@@ -252,6 +299,8 @@ func absentStatus() Status {
 		Exclude: ExcludeStatus{
 			Destinations:  []string{},
 			WorkloadCIDRs: []string{},
+			Ingress:       DirectionExclusions{Sources: []string{}, Destinations: []string{}},
+			Egress:        DirectionExclusions{Sources: []string{}, Destinations: []string{}},
 		},
 		Connections: ConnectionStatus{Detail: "agent is not running"},
 	}

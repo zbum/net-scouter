@@ -3,8 +3,11 @@ package config
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,11 +15,14 @@ import (
 )
 
 type Config struct {
+	Mode         string      `yaml:"mode"`
 	Interfaces   []string    `yaml:"interfaces"`
 	ObjectPath   string      `yaml:"objectPath"`
 	AllowVirtual bool        `yaml:"allowVirtualInterfaces"`
 	Aggregation  Aggregation `yaml:"aggregation"`
 	Export       Export      `yaml:"export"`
+	Exporter     Exporter    `yaml:"exporter"`
+	Storage      Storage     `yaml:"storage"`
 	Exclude      Exclude     `yaml:"exclude"`
 	Capture      Capture     `yaml:"capture"`
 	Safety       Safety      `yaml:"safety"`
@@ -63,9 +69,61 @@ type Export struct {
 	Path string `yaml:"path"`
 }
 
+type Exporter struct {
+	Listen   string `yaml:"listen"`
+	MaxFlows uint32 `yaml:"maxFlows"`
+}
+
+type Storage struct {
+	Path          string        `yaml:"path"`
+	FlushInterval time.Duration `yaml:"-"`
+	Retention     time.Duration `yaml:"-"`
+	MaxEntries    int           `yaml:"maxEntries"`
+	MaxBytes      int64         `yaml:"maxBytes"`
+}
+
+func (s *Storage) UnmarshalYAML(node *yaml.Node) error {
+	if err := rejectUnknown(node, "path", "flushInterval", "retention", "maxEntries", "maxBytes"); err != nil {
+		return err
+	}
+	var raw struct {
+		Path          string `yaml:"path"`
+		FlushInterval string `yaml:"flushInterval"`
+		Retention     string `yaml:"retention"`
+		MaxEntries    int    `yaml:"maxEntries"`
+		MaxBytes      int64  `yaml:"maxBytes"`
+	}
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	s.Path, s.MaxEntries, s.MaxBytes = raw.Path, raw.MaxEntries, raw.MaxBytes
+	if raw.FlushInterval != "" {
+		interval, err := time.ParseDuration(raw.FlushInterval)
+		if err != nil {
+			return fmt.Errorf("storage.flushInterval: %w", err)
+		}
+		s.FlushInterval = interval
+	}
+	if raw.Retention != "" {
+		retention, err := time.ParseDuration(raw.Retention)
+		if err != nil {
+			return fmt.Errorf("storage.retention: %w", err)
+		}
+		s.Retention = retention
+	}
+	return nil
+}
+
 type Exclude struct {
-	Destinations  []string `yaml:"destinations"`
-	WorkloadCIDRs []string `yaml:"workloadCIDRs"`
+	Destinations  []string           `yaml:"destinations"`
+	WorkloadCIDRs []string           `yaml:"workloadCIDRs"`
+	Ingress       EndpointExclusions `yaml:"ingress"`
+	Egress        EndpointExclusions `yaml:"egress"`
+}
+
+type EndpointExclusions struct {
+	Sources      []string `yaml:"sources"`
+	Destinations []string `yaml:"destinations"`
 }
 
 func Load(path string) (Config, error) {
@@ -99,8 +157,29 @@ func Load(path string) (Config, error) {
 	if c.Aggregation.MaxFlows > 1_048_576 {
 		return Config{}, fmt.Errorf("aggregation.maxFlows must not exceed 1048576")
 	}
-	if c.Export.Type == "" {
-		c.Export.Type = "stdout"
+	if c.Mode == "" {
+		c.Mode = "exporter"
+	}
+	if c.Exporter.Listen == "" {
+		c.Exporter.Listen = "127.0.0.1:9469"
+	}
+	if c.Exporter.MaxFlows == 0 {
+		c.Exporter.MaxFlows = 4096
+	}
+	if c.Storage.Path == "" {
+		c.Storage.Path = "/var/lib/net-scouter/flows.db"
+	}
+	if c.Storage.FlushInterval == 0 {
+		c.Storage.FlushInterval = 5 * time.Minute
+	}
+	if c.Storage.Retention == 0 {
+		c.Storage.Retention = 720 * time.Hour
+	}
+	if c.Storage.MaxEntries == 0 {
+		c.Storage.MaxEntries = 65536
+	}
+	if c.Storage.MaxBytes == 0 {
+		c.Storage.MaxBytes = 67108864
 	}
 	if err := c.Validate(); err != nil {
 		return Config{}, err
@@ -128,8 +207,28 @@ func (c Config) Validate() error {
 	if c.Aggregation.MaxFlows == 0 {
 		return fmt.Errorf("aggregation.maxFlows must be positive")
 	}
-	if c.Export.Type != "stdout" || c.Export.Path != "" {
-		return fmt.Errorf("export must use type stdout with no path")
+	if c.Mode != "exporter" && c.Mode != "persistent" {
+		return fmt.Errorf("mode must be exporter or persistent")
+	}
+	if (c.Export.Type != "" && c.Export.Type != "stdout") || c.Export.Path != "" {
+		return fmt.Errorf("deprecated export must use type stdout with no path")
+	}
+	if c.Exporter.Listen == "" || c.Exporter.MaxFlows == 0 || c.Exporter.MaxFlows > 1_048_576 {
+		return fmt.Errorf("exporter.listen and exporter.maxFlows must be valid")
+	}
+	_, portText, err := net.SplitHostPort(c.Exporter.Listen)
+	if err != nil {
+		return fmt.Errorf("exporter.listen: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("exporter.listen: port must be 1..65535")
+	}
+	if c.Storage.Path == "" || c.Storage.FlushInterval <= 0 || c.Storage.Retention <= 0 || c.Storage.MaxEntries <= 0 || c.Storage.MaxBytes <= 0 {
+		return fmt.Errorf("storage path, flushInterval, retention, maxEntries, and maxBytes must be positive")
+	}
+	if !filepath.IsAbs(c.Storage.Path) {
+		return fmt.Errorf("storage.path must be absolute")
 	}
 	if c.Capture.IPv4 == nil || c.Capture.IPv6 == nil || c.Capture.TCP == nil || c.Capture.UDP == nil || c.Capture.ICMP == nil {
 		return fmt.Errorf("capture.ipv4, ipv6, tcp, udp, and icmp must be set")
@@ -146,9 +245,25 @@ func (c Config) Validate() error {
 	if !enabled(c.Safety.FailOpen) {
 		return fmt.Errorf("safety.failOpen must be true")
 	}
-	for _, value := range append(append([]string{}, c.Exclude.Destinations...), c.Exclude.WorkloadCIDRs...) {
-		if _, err := netip.ParsePrefix(value); err != nil {
-			return fmt.Errorf("invalid exclude CIDR %q: %w", value, err)
+	for _, item := range []struct {
+		name   string
+		values []string
+	}{
+		{"exclude.destinations", c.Exclude.Destinations},
+		{"exclude.workloadCIDRs", c.Exclude.WorkloadCIDRs},
+		{"exclude.ingress.sources", c.Exclude.Ingress.Sources},
+		{"exclude.ingress.destinations", c.Exclude.Ingress.Destinations},
+		{"exclude.egress.sources", c.Exclude.Egress.Sources},
+		{"exclude.egress.destinations", c.Exclude.Egress.Destinations},
+	} {
+		for _, value := range item.values {
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil {
+				return fmt.Errorf("invalid %s CIDR %q: %w", item.name, value, err)
+			}
+			if prefix.Addr().Is4In6() && prefix.Bits() < 96 {
+				return fmt.Errorf("invalid %s CIDR %q: IPv4-mapped IPv6 CIDR must have prefix length at least 96", item.name, value)
+			}
 		}
 	}
 	return nil

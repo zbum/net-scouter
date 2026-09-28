@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/flow"
 )
 
 func TestPrepareFlowsSeparatesUnavailableConnections(t *testing.T) {
@@ -60,7 +60,7 @@ func TestFilterProtocol(t *testing.T) {
 	when := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
 	result := PrepareFlows([]flow.Record{
 		{SrcIP: netip.MustParseAddr("10.0.0.1"), DstIP: netip.MustParseAddr("10.0.0.2"), Protocol: 6, DstPort: 22, Direction: flow.DirectionIngress, FirstSeen: when, LastSeen: when},
-		{SrcIP: netip.MustParseAddr("10.0.0.1"), DstIP: netip.MustParseAddr("8.8.8.8"), Protocol: 17, DstPort: 53, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when},
+		{SrcIP: netip.MustParseAddr("10.0.0.1"), DstIP: netip.MustParseAddr("203.0.113.53"), Protocol: 17, DstPort: 53, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when},
 	}, true, "5.15", "")
 	both, err := FilterProtocol(result, "both")
 	if err != nil || len(both.Records) != 2 {
@@ -87,9 +87,9 @@ func TestFilterEstablishedHidesFailedTCPByDefault(t *testing.T) {
 	result := FlowsResult{
 		ConnectionsAvailable: true,
 		Records: []FlowView{
-			{SrcIP: "192.168.31.102", DstIP: "8.8.8.8", Protocol: 6, DstPort: 53, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when, Packets: 10, Connections: &one},
-			{SrcIP: "192.168.31.102", DstIP: "69.5.169.100", Protocol: 6, DstPort: 23827, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when, Packets: 3, Connections: &zero},
-			{SrcIP: "192.168.31.102", DstIP: "8.8.8.8", Protocol: 17, DstPort: 53, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when, Packets: 1},
+			{SrcIP: "198.51.100.20", DstIP: "203.0.113.53", Protocol: 6, DstPort: 53, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when, Packets: 10, Connections: &one},
+			{SrcIP: "198.51.100.20", DstIP: "192.0.2.100", Protocol: 6, DstPort: 23827, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when, Packets: 3, Connections: &zero},
+			{SrcIP: "198.51.100.20", DstIP: "203.0.113.53", Protocol: 17, DstPort: 53, Direction: flow.DirectionEgress, FirstSeen: when, LastSeen: when, Packets: 1},
 		},
 	}
 	established := FilterEstablished(result, false)
@@ -164,6 +164,123 @@ func TestFormatStatusShowsCapacity(t *testing.T) {
 	})
 	if !strings.Contains(text, "running") || !strings.Contains(text, "at capacity") || !strings.Contains(text, "trace ABI 5.15") {
 		t.Fatalf("status text: %s", text)
+	}
+}
+
+func TestFormatStatusShowsDirectionalExclusions(t *testing.T) {
+	t.Parallel()
+	st := Status{
+		Source: "agent",
+		Exclude: ExcludeStatus{
+			Ingress: DirectionExclusions{Sources: []string{"192.0.2.0/24"}, Destinations: []string{"10.0.0.0/24"}},
+			Egress:  DirectionExclusions{Sources: []string{"2001:db8::/32"}, Destinations: []string{"198.51.100.0/24"}},
+		},
+	}
+	text := FormatStatus(st)
+	for _, want := range []string{"ingress sources:       192.0.2.0/24", "ingress destinations:  10.0.0.0/24", "egress sources:        2001:db8::/32", "egress destinations:   198.51.100.0/24"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status text missing %q: %s", want, text)
+		}
+	}
+	body, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"ingress":{"sources":["192.0.2.0/24"]`, `"egress":{"sources":["2001:db8::/32"]`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("status JSON missing %q: %s", want, body)
+		}
+	}
+}
+
+func TestFormatStatusShowsModeSpecificRuntime(t *testing.T) {
+	t.Parallel()
+	persistent := FormatStatus(Status{
+		Source: "agent", Mode: "persistent", DurableStorage: DurableDegraded, DurableReason: "disk full",
+		Storage: StorageStatus{
+			Path: "/var/lib/net-scouter/flows.db", Schema: 1, Entries: 8, FileBytes: 4096,
+			MaxEntries: 100, MaxBytes: 10240, Retention: "720h0m0s", ExpiredTotal: 2, EvictedTotal: 3, Error: "disk full",
+		},
+	})
+	for _, want := range []string{"mode:                  persistent", "storage path:          /var/lib/net-scouter/flows.db", "storage entries:       8 / 100", "storage error:         disk full"} {
+		if !strings.Contains(persistent, want) {
+			t.Fatalf("persistent status missing %q: %s", want, persistent)
+		}
+	}
+	exporter := FormatStatus(Status{
+		Source: "agent", Mode: "exporter", DurableStorage: DurableDisabled,
+		Exporter: ExporterStatus{Listen: "127.0.0.1:9469", Published: 4, Omitted: 2},
+	})
+	for _, want := range []string{"mode:                  exporter", "metrics listen:        127.0.0.1:9469", "published / omitted:   4 / 2"} {
+		if !strings.Contains(exporter, want) {
+			t.Fatalf("exporter status missing %q: %s", want, exporter)
+		}
+	}
+}
+
+func TestFormatStatusShowsDurableStorageReasonForItsState(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		state  string
+		reason string
+		want   string
+	}{
+		{name: "ready", state: DurableReady, want: "durable storage:       ready\n"},
+		{name: "disabled fallback", state: DurableDisabled, want: "durable storage:       disabled (persistent mode is not enabled)\n"},
+		{name: "degraded fallback", state: DurableDegraded, want: "durable storage:       degraded (storage error not specified)\n"},
+		{name: "degraded detail", state: DurableDegraded, reason: "disk full", want: "durable storage:       degraded (disk full)\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, source := range []string{"agent", "none"} {
+				st := Status{Source: source, DurableStorage: tc.state, DurableReason: tc.reason}
+				got := FormatStatus(st)
+				if !strings.Contains(got, tc.want) {
+					t.Fatalf("source %q: expected %q in status:\n%s", source, tc.want, got)
+				}
+				if tc.state == DurableReady && strings.Contains(got, DurableReason) {
+					t.Fatalf("source %q: ready status has disabled reason:\n%s", source, got)
+				}
+				body, err := json.Marshal(st)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(body), `"durableStorageReason":"`+tc.reason+`"`) {
+					t.Fatalf("source %q: JSON reason changed: %s", source, body)
+				}
+			}
+		})
+	}
+}
+
+func TestFormatStatusShowsSeparateMemoryEvictions(t *testing.T) {
+	t.Parallel()
+	st := Status{Source: "agent", Mode: "persistent", MemoryEvictedTotal: 7, Storage: StorageStatus{EvictedTotal: 3}}
+	got := FormatStatus(st)
+	if !strings.Contains(got, "memory evicted:        7\n") || !strings.Contains(got, "expired / evicted:     0 / 3\n") {
+		t.Fatalf("memory and durable evictions were conflated:\n%s", got)
+	}
+	body, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"memoryEvictedTotal":7`) || !strings.Contains(string(body), `"evictedTotal":3`) {
+		t.Fatalf("memory and durable eviction JSON: %s", body)
+	}
+}
+
+func TestFormatFlowsShowsDurableStorageStateWithoutReason(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{DurableReady, DurableDisabled, DurableDegraded} {
+		result := FlowsResult{DurableStorage: state}
+		got, err := FormatFlows(result, "table")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, "durable storage: "+state+"\n") || strings.Contains(got, DurableReason) {
+			t.Fatalf("state %q: unexpected table:\n%s", state, got)
+		}
 	}
 }
 

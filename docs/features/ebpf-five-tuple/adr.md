@@ -8,7 +8,7 @@ status: draft
 authors:
   - jibum.jung@gmail.com
 created: 2026-09-23
-last-updated: 2026-09-25
+last-updated: 2026-09-26
 ---
 
 # ADR: eBPF 5-tuple 수집 아키텍처
@@ -124,7 +124,7 @@ Docker container와 Kubernetes Pod 사이의 동일 host 내부 통신은 외부
 
 ## ADR-004 — 로컬 durable storage와 보존 정책
 
-**Status:** proposed
+**Status:** superseded
 
 **Context**
 
@@ -383,3 +383,108 @@ ADR-003의 양 endpoint workload CIDR 조건은 Docker와 Kubernetes 네트워�
 - host 네트워크를 공유하는 Pod 또는 container는 호스트 주소를 쓰므로 IP만으로 호스트 프로세스와 구분할 수 없다.
 - NAT 뒤의 workload 패킷은 선택한 NIC에서 호스트 주소로 보일 수 있다. 따라서 TCP connection 존재·횟수는 socket tracepoint를 기준으로 하되 packet·byte 수에는 workload 트래픽이 섞일 수 있다.
 - 주소 조회에 실패하거나 활성 주소가 없으면 수집을 시작하지 않는다. 주소가 바뀌면 재시작이 필요하다.
+
+---
+
+## ADR-010 — 휘발 exporter와 bbolt 영속 저장을 운영 모드로 분리
+
+**Status:** accepted
+
+**Context**
+
+ADR-004는 저장 엔진과 보존 정책을 미정으로 남겼다. 운영자는 재시작 후 이력이 필요한 서버와 Prometheus metrics만 필요한 서버를 모두 지원하길 원한다. 사용자는 `bbolt` 의존성과 두 모드 운영을 승인했다. 저장 실패가 계속될 때 userspace 집계가 무한히 늘어서는 안 된다.
+
+**Decision**
+
+`mode: exporter`를 기본값으로 둔다. 집계한 flow를 메모리에 보관하고 캐시된 Prometheus 형식 `/metrics`를 제공한다. scrape 요청은 BPF map을 다시 읽지 않는다. 이 모드에서는 DB 파일을 만들지 않으며 재시작 후 이력은 사라진다. `exporter.maxFlows` 기본값은 4096개의 metrics 게시 상한이다.
+
+`mode: persistent`는 `go.etcd.io/bbolt`를 사용한다. 기본 경로는 `/var/lib/net-scouter/flows.db`이며, 커널 snapshot의 epoch와 counter high-water로 구한 증가분을 ACL 키별 절대값에 합산한다. 5분마다 원자적으로 upsert/delete하고 정상 종료 때 마지막 수집과 flush를 수행한다. 이미 성공적으로 저장된 행은 재시작 후와 에이전트 정지 중에도 CLI로 조회한다. 마지막 관찰 후 720시간 비활성 TTL과 65,536행 상한을 기본값으로 둔다. 삭제·보존 순서는 `lastSeen`, 동률이면 정규화된 storage key 순으로 결정한다.
+
+persistent 모드의 userspace 집계는 flush가 연속 실패해도 `storage.maxEntries`를 상한으로 삼는다. 넘치는 행은 같은 순서로 제거하며, DB에 저장되었을 수 있는 행만 중복 없는 삭제 대기에 넣는다. 저장 전 새로 생성된 dirty 행이 탈락하면 보존할 수 없는 손실로 기록한다. 상태의 `memoryEvictedTotal`은 이 메모리 제거 누적값이고, DB retention의 `storage.evictedTotal`과 별개다. 제거가 한 번이라도 발생하면 `possibleLoss`를 표시한다. 저장 오류는 `degraded`로 표시하고 다음 주기에 재시도한다.
+
+`storage.maxBytes` 기본값 64MiB는 bbolt 파일 크기의 운영 경고 임계값으로 사용한다. 물리 파일의 hard cap이나 자동 compaction을 약속하지 않는다. 비정상 종료 시 마지막 성공 flush 이후의 기록은 잃을 수 있다.
+
+**Drivers**
+
+- 서버별로 휘발 metrics 또는 로컬 이력을 선택할 수 있어야 한다.
+- packet 경로에 저장 I/O를 넣지 않고, DB 갱신은 트랜잭션으로 일관되게 처리한다.
+- 지속적인 저장 오류와 flow churn에도 userspace 메모리 증가를 제한한다.
+- 저장 실패와 집계 손실을 상태에서 구분해 운영자가 판단할 수 있게 한다.
+
+**Alternatives Considered**
+
+- **표준 라이브러리 atomic checkpoint:** 의존성은 없지만 매 flush마다 전체 상태를 다시 쓰므로 행 수가 많을 때 write amplification이 커져 채택하지 않는다.
+- **모든 서버에서 영속 저장 강제:** 단순 metrics만 필요한 서버에도 디스크 I/O와 DB 운영을 강제하므로 채택하지 않는다.
+- **`maxBytes`에서 행 강제 삭제:** bbolt 파일의 물리 크기와 논리 행 수가 일치하지 않고 삭제가 파일 축소를 보장하지 않아 채택하지 않는다.
+
+**Consequences**
+
+- 운영자는 두 모드 중 하나를 설정한다. exporter는 저장 이력이 없고 persistent는 metrics HTTP 포트를 열지 않는다.
+- DB 경로의 소유권·권한, 잠금, schema 검증, 재시작 복구와 장애 주입 시험이 필요하다.
+- flush 실패 중 오래된 행이나 아직 저장하지 못한 행이 메모리에서 제거될 수 있으며, 이를 손실 가능성으로 표시한다.
+- `maxBytes` 초과 경고 이후 실제 파일 축소와 백업·compaction은 별도 운영 절차가 필요하다.
+- 이 결정은 ADR-004의 미정 상태를 대체한다. ADR-006 당시 `bbolt`가 승인되지 않았다는 기록은 그 시점의 결정 범위로 유지한다.
+
+---
+
+## ADR-011 — 방향별 source·destination CIDR 제외
+
+**Status:** accepted
+
+**Context**
+
+기존 `exclude.destinations`는 방향과 무관하게 목적지 하나만 검사했다. 운영자는 ingress 상대 source와 egress 상대 destination처럼 ACL 관점에서 서로 다른 주소를 제외해야 한다. 같은 행을 조회, metrics, 저장에서 다르게 취급하면 결과를 신뢰하기 어렵다.
+
+**Decision**
+
+`exclude.ingress.sources`, `exclude.ingress.destinations`, `exclude.egress.sources`, `exclude.egress.destinations`에 CIDR 목록을 받는다. 해당 방향의 source 또는 destination 목록 중 하나라도 맞으면 행을 제외한다. 기존 `exclude.destinations`는 양방향 목적지 규칙으로, `workloadCIDRs`는 양 endpoint가 설정한 CIDR 집합에 속할 때 제외하는 보조 규칙으로 유지한다.
+
+에이전트는 raw counter delta를 userspace 누적값에 반영하기 전에 제외 규칙을 적용한다. 조회, metrics, 영속 저장 및 명시적 stdout export는 같은 누적값과 규칙을 따른다. 오프라인 DB 조회에도 현재 설정의 제외 규칙을 적용한다. 설정 변경 후에는 에이전트를 재시작한다.
+
+**Drivers**
+
+- ingress와 egress의 ACL 의미에 맞는 제외
+- 기존 설정과의 호환성
+- 출력 경로 사이의 동일한 행 집합
+
+**Alternatives Considered**
+
+- **전역 source/destination 둘 중 하나에 일치하면 제외:** 방향별 운영 의도를 구분하지 못한다.
+- **CLI 출력에서만 제외:** metrics와 저장소에 불필요한 행이 남는다.
+- **BPF map에서만 제외:** 설정 변경 때 BPF 정책 갱신과 커널 map 상태 관리가 필요하다.
+
+**Consequences**
+
+- 원본 BPF map에는 제외된 항목이 남을 수 있지만 userspace 누적·저장·표시에서는 빠진다.
+- 이미 저장된 행도 오프라인 조회에서 현재 제외 규칙에 따라 숨겨진다.
+- CIDR을 너무 넓게 지정하면 필요한 ACL 후보도 보이지 않으므로 적용 목록을 `status`에 보여 준다.
+
+---
+
+## ADR-012 — 사용자 공간 빌드의 Go 1.26 기준
+
+**Status:** accepted
+
+**Context**
+
+승인된 bbolt와 관련 Go 의존성의 호환성에 맞춰 개발·CI 빌드의 toolchain 기준을 일치시켜야 한다. 개발 컴퓨터에는 Go 1.26이 설치되어 있으며, 이전 `go.mod` 기준과 실제 의존성 요구가 다르면 로컬·CI·패키징 결과가 달라질 수 있다.
+
+**Decision**
+
+`go.mod`에 `go 1.26`을 명시한다. Make와 Jenkins의 사용자 공간 빌드·테스트 전에 Go 1.26 이상인지 검사하고, 낮은 버전은 오류를 명확히 표시해 중단한다. 배포 대상인 Rocky 8.10+와 Ubuntu 22.04+의 kernel/OS 기준은 유지하고, Go 1.26은 빌드 환경의 요구사항으로 취급한다.
+
+**Drivers**
+
+- 의존성 요구 버전과 빌드 환경 일치
+- 로컬·CI·패키징의 재현성
+- 지원 OS에서 실행되는 binary와 빌드 서버 toolchain의 구분
+
+**Alternatives Considered**
+
+- **낮은 Go 버전을 유지하고 의존성을 역으로 고정:** 승인된 의존성의 최신 호환성을 포기하고 별도 유지보수 부담이 생긴다.
+- **자동 toolchain 다운로드에 의존:** CI의 네트워크와 환경 차이에 따라 빌드 결과가 달라질 수 있다.
+
+**Consequences**
+
+- 개발·CI·패키징 환경은 Go 1.26 이상을 준비해야 한다.
+- Rocky/Ubuntu 배포 서버에 Go toolchain을 설치할 필요는 없다. 대상 커널에서의 verifier load와 실제 수집 통합 시험은 별도로 수행한다.

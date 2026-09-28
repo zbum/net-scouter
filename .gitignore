@@ -1,3 +1,8 @@
 dist/
 .idea/
 *.iml
+
+# OMC runtime state is local-only; project skills are intentionally shareable.
+.omc/**
+!.omc/skills/
+!.omc/skills/**

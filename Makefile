@@ -9,30 +9,35 @@ GOARCH ?= amd64
 DOCKER ?= docker
 ROCKY_IMAGE ?= rockylinux:8
 
+.DEFAULT_GOAL := build
+
 .PHONY: build build-linux build-windows build-darwin build-all build-bpf \
 	build-release verify-bpf verify-bpf-load verify-rocky-userspace \
-	test test-go test-static test-ci check checksums clean install uninstall \
+	test test-go test-static test-ci check check-go-version checksums clean install uninstall \
 	rpm publish-rpm deb publish-deb package-images package-image-deb package-image-rpm \
 	build-bpf-image
 
 prefix ?= /usr/local
 sysconfdir ?= /etc
 
-build:
+check-go-version:
+	@GO_BIN="$(GO)" ./scripts/check-go-version.sh
+
+build: check-go-version
 	@mkdir -p $(DIST_DIR)
 	$(GO) build -trimpath -o $(DIST_DIR)/$(BINARY) ./cmd/net-scouter
 
-build-linux:
+build-linux: check-go-version
 	@mkdir -p $(DIST_DIR)
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) $(GO) build -trimpath \
 		-o $(DIST_DIR)/$(BINARY)-linux-$(GOARCH) ./cmd/net-scouter
 
-build-windows:
+build-windows: check-go-version
 	@mkdir -p $(DIST_DIR)
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath \
 		-o $(DIST_DIR)/$(BINARY)-windows-amd64.exe ./cmd/net-scouter
 
-build-darwin:
+build-darwin: check-go-version
 	@mkdir -p $(DIST_DIR)
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath \
 		-o $(DIST_DIR)/$(BINARY)-darwin-amd64 ./cmd/net-scouter
@@ -62,16 +67,18 @@ verify-rocky-userspace:
 		-v "$(CURDIR)/$(DIST_DIR):/artifacts:ro" $(ROCKY_IMAGE) \
 		/artifacts/$(BINARY)-linux-amd64 flows --help
 
-test-go:
+test-go: check-go-version
 	$(GO) test ./...
 
 test-static:
+	./scripts/test-go-version-check.sh
 	./scripts/test-bpf-invariants.sh
 	./scripts/test-ci-invariants.sh
+	./scripts/test-public-repo-invariants.sh
 
 test: test-go test-static
 
-test-ci: test build-release
+test-ci: check-go-version test build-release
 
 check:
 	./scripts/check-kernel.sh
@@ -122,8 +129,8 @@ rpm:
 	./scripts/build-rpm.sh
 
 publish-rpm:
-	@test -n "$$NEXUS_USER" && test -n "$$NEXUS_PASS" || { \
-		echo "usage: NEXUS_USER=... NEXUS_PASS=... make publish-rpm" >&2; \
+	@test -n "$$NEXUS_URL" && test -n "$$NEXUS_USER" && test -n "$$NEXUS_PASS" || { \
+		echo "usage: NEXUS_URL=https://packages.example.net NEXUS_USER=... NEXUS_PASS=... make publish-rpm" >&2; \
 		exit 1; \
 	}
 	./scripts/publish-rpm.sh
@@ -132,8 +139,8 @@ deb:
 	./scripts/build-deb.sh
 
 publish-deb:
-	@test -n "$$NEXUS_USER" && test -n "$$NEXUS_PASS" || { \
-		echo "usage: NEXUS_USER=... NEXUS_PASS=... make publish-deb" >&2; \
+	@test -n "$$NEXUS_URL" && test -n "$$NEXUS_USER" && test -n "$$NEXUS_PASS" || { \
+		echo "usage: NEXUS_URL=https://packages.example.net NEXUS_USER=... NEXUS_PASS=... make publish-deb" >&2; \
 		exit 1; \
 	}
 	./scripts/publish-deb.sh

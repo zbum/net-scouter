@@ -68,6 +68,7 @@ mkdir -p "$top"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 cp "dist/net-scouter-linux-$GOARCH" "$top/SOURCES/net-scouter"
 cp dist/flow.bpf.o "$top/SOURCES/flow.bpf.o"
 cp configs/net-scouter.yaml "$top/SOURCES/net-scouter.yaml"
+cp LICENSE "$top/SOURCES/LICENSE"
 sed 's#/usr/local/bin/net-scouter#/usr/bin/net-scouter#' \
 	deploy/systemd/net-scouter.service > "$top/SOURCES/net-scouter.service"
 cp deploy/rpm/net-scouter.spec "$top/SPECS/net-scouter.spec"
@@ -96,4 +97,10 @@ RELEASE=$RELEASE
 RPM_ARCH=$RPM_ARCH
 RPM_PATH=$rpm_path
 EOF
+rpm_name=$(basename "$rpm_path")
+if command -v sha256sum >/dev/null 2>&1; then
+	(cd dist/rpm && sha256sum "$rpm_name" > "$rpm_name.sha256")
+else
+	(cd dist/rpm && shasum -a 256 "$rpm_name" > "$rpm_name.sha256")
+fi
 echo "built $rpm_path"

@@ -22,9 +22,9 @@ func TestRecordJSONIncludesTCPConnections(t *testing.T) {
 
 func TestForACLDropsReturnPathAndCollapsesPorts(t *testing.T) {
 	t.Parallel()
-	server := netip.MustParseAddr("192.168.31.102")
-	client := netip.MustParseAddr("192.168.31.1")
-	resolver := netip.MustParseAddr("8.8.8.8")
+	server := netip.MustParseAddr("198.51.100.20")
+	client := netip.MustParseAddr("192.0.2.10")
+	resolver := netip.MustParseAddr("203.0.113.53")
 	got := ForACL([]Record{
 		{SrcIP: client, DstIP: server, SrcPort: 50000, DstPort: 22, Protocol: 6, Direction: DirectionIngress, Packets: 10, Bytes: 100},
 		{SrcIP: server, DstIP: client, SrcPort: 22, DstPort: 50000, Protocol: 6, Direction: DirectionEgress, Packets: 8, Bytes: 80},
@@ -40,6 +40,20 @@ func TestForACLDropsReturnPathAndCollapsesPorts(t *testing.T) {
 	}
 	if got[1].DstPort != 53 || got[1].SrcPort != 0 || got[1].Direction != DirectionEgress || got[1].Packets != 2 || got[1].Bytes != 80 {
 		t.Fatalf("outbound = %+v", got[1])
+	}
+}
+
+func TestForACLRawPreservesKernelSourcePortsForDeltaAccounting(t *testing.T) {
+	t.Parallel()
+	host := netip.MustParseAddr("10.0.0.1")
+	remote := netip.MustParseAddr("192.0.2.5")
+	got := ForACLRaw([]Record{
+		{SrcIP: host, DstIP: remote, SrcPort: 40000, DstPort: 443, Protocol: 6, Direction: DirectionEgress, Connections: 1},
+		{SrcIP: host, DstIP: remote, SrcPort: 40001, DstPort: 443, Protocol: 6, Direction: DirectionEgress, Connections: 1},
+		{SrcIP: remote, DstIP: host, SrcPort: 443, DstPort: 40000, Protocol: 6, Direction: DirectionIngress},
+	})
+	if len(got) != 2 || got[0].SrcPort != 40000 || got[1].SrcPort != 40001 {
+		t.Fatalf("raw ACL records = %+v", got)
 	}
 }
 

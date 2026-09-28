@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/example/net-scouter/internal/ebpf"
+	"github.com/zbum/net-scouter/internal/ebpf"
 )
 
 func collectProbes() []Probe {
