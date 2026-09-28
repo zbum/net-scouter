@@ -2,6 +2,28 @@
 #define NET_SCOUTER_BPF_HOST_TEST 1
 #include "../bpf/flow.bpf.c"
 
+static __u8 test_packet[256];
+static __u32 test_packet_length;
+
+static long load_test_packet(const struct __sk_buff *skb, __u32 offset,
+                             void *destination, __u32 length)
+{
+    __u8 *output = destination;
+
+    (void)skb;
+    if (offset > test_packet_length || length > test_packet_length - offset)
+        return -1;
+    for (__u32 i = 0; i < length; i++)
+        output[i] = test_packet[offset + i];
+    return 0;
+}
+
+static void clear_test_packet(void)
+{
+    for (__u32 i = 0; i < sizeof(test_packet); i++)
+        test_packet[i] = 0;
+}
+
 static void mapped_address(__u8 *address, __u8 a, __u8 b, __u8 c, __u8 d)
 {
     address[10] = 0xff;
@@ -65,5 +87,58 @@ int main(void)
         key.family != FLOW_FAMILY_IPV4 || key.src_addr[0] != 192 ||
         key.dst_addr[0] != 198 || key.src_addr[4] != 0)
         return 5;
+
+    bpf_skb_load_bytes = load_test_packet;
+    struct __sk_buff skb = {};
+    struct ipv4_hdr *ipv4 = (struct ipv4_hdr *)(test_packet + 14);
+    struct ports_hdr *ports = (struct ports_hdr *)(test_packet + 34);
+
+    clear_test_packet();
+    test_packet_length = 38;
+    skb.len = test_packet_length;
+    ipv4->version_ihl = 0x45;
+    ipv4->total_length = ntohs(24);
+    ipv4->protocol = IPPROTO_TCP;
+    ipv4->src[0] = 192;
+    ipv4->dst[0] = 198;
+    ports->src = ntohs(41000);
+    ports->dst = ntohs(443);
+    key = (struct flow_key){};
+    if (!parse_ipv4(&skb, ipv4, 14, test_packet + test_packet_length, &key) ||
+        key.family != FLOW_FAMILY_IPV4 || key.protocol != IPPROTO_TCP ||
+        key.src_port != 41000 || key.dst_port != 443)
+        return 6;
+
+    test_packet_length = 37;
+    skb.len = test_packet_length;
+    if (parse_ipv4(&skb, ipv4, 14, test_packet + test_packet_length, &key))
+        return 7;
+
+    clear_test_packet();
+    test_packet_length = 66;
+    skb.len = test_packet_length;
+    struct ipv6_hdr *ipv6 = (struct ipv6_hdr *)(test_packet + 14);
+    struct ipv6_ext_hdr *extension =
+        (struct ipv6_ext_hdr *)(test_packet + 54);
+    ports = (struct ports_hdr *)(test_packet + 62);
+    ipv6->version_class_flow = __builtin_bswap32(6U << 28);
+    ipv6->payload_length = ntohs(12);
+    ipv6->next_header = IPPROTO_HOPOPTS;
+    extension->next_header = IPPROTO_UDP;
+    extension->length = 0;
+    ports->src = ntohs(5353);
+    ports->dst = ntohs(53);
+    key = (struct flow_key){};
+    if (!parse_ipv6(&skb, ipv6, 14, test_packet + test_packet_length, &key) ||
+        key.family != FLOW_FAMILY_IPV6 || key.protocol != IPPROTO_UDP ||
+        key.src_port != 5353 || key.dst_port != 53)
+        return 8;
+
+    ipv6->payload_length = ntohs(8);
+    if (parse_ipv6(&skb, ipv6, 14, test_packet + test_packet_length, &key))
+        return 9;
+    ipv6->payload_length = ntohs(13);
+    if (parse_ipv6(&skb, ipv6, 14, test_packet + test_packet_length, &key))
+        return 10;
     return 0;
 }

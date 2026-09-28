@@ -197,6 +197,8 @@ static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *)1;
 static long (*bpf_map_update_elem)(void *map, const void *key,
                                    const void *value, __u64 flags) = (void *)2;
 static __u64 (*bpf_ktime_get_ns)(void) = (void *)5;
+static long (*bpf_skb_load_bytes)(const struct __sk_buff *skb, __u32 offset,
+                                  void *to, __u32 length) = (void *)26;
 
 static __always_inline __u16 ntohs(__u16 value)
 {
@@ -226,37 +228,37 @@ static __always_inline int reply_to_client(const struct flow_key *key)
     return 1;
 }
 
-static __always_inline int parse_ports(void *cursor, void *packet_end,
-                                       void *data_end,
+static __always_inline int parse_ports(const struct __sk_buff *skb,
+                                       __u32 offset, __u32 remaining,
                                        struct flow_key *key)
 {
-    struct ports_hdr *ports = cursor;
+    struct ports_hdr ports;
 
-    if ((void *)(ports + 1) > packet_end ||
-        (void *)(ports + 1) > data_end)
+    if (remaining < sizeof(ports) ||
+        bpf_skb_load_bytes(skb, offset, &ports, sizeof(ports)) < 0)
         return 0;
-    key->src_port = ntohs(ports->src);
-    key->dst_port = ntohs(ports->dst);
+    key->src_port = ntohs(ports.src);
+    key->dst_port = ntohs(ports.dst);
     return 1;
 }
 
-static __always_inline int parse_ipv4(void *cursor, void *data_end,
+static __always_inline int parse_ipv4(const struct __sk_buff *skb,
+                                      void *cursor, __u32 network_offset,
+                                      void *data_end,
                                       struct flow_key *key)
 {
     struct ipv4_hdr *ip = cursor;
     __u32 header_length;
     __u32 total_length;
-    void *packet_end;
 
     if ((void *)(ip + 1) > data_end || (ip->version_ihl >> 4) != 4)
         return 0;
-    header_length = (ip->version_ihl & 0x0f) * 4;
+    header_length = ((__u32)ip->version_ihl & 0x0f) << 2;
     total_length = ntohs(ip->total_length);
     if (header_length < sizeof(*ip) ||
         total_length < header_length + sizeof(struct ports_hdr) ||
-        cursor + total_length > data_end)
+        network_offset > skb->len || total_length > skb->len - network_offset)
         return 0;
-    packet_end = cursor + total_length;
     /* Non-initial fragments do not carry transport ports. */
     if (ntohs(ip->fragment_offset) & 0x1fff)
         return 0;
@@ -267,68 +269,74 @@ static __always_inline int parse_ipv4(void *cursor, void *data_end,
     key->protocol = ip->protocol;
     copy_addr(key->src_addr, ip->src, 4);
     copy_addr(key->dst_addr, ip->dst, 4);
-    return parse_ports(cursor + header_length, packet_end, data_end, key);
+    return parse_ports(skb, network_offset + header_length,
+                       total_length - header_length, key);
 }
 
-static __always_inline int parse_ipv6(void *cursor, void *data_end,
+static __always_inline int parse_ipv6(const struct __sk_buff *skb,
+                                      void *cursor, __u32 network_offset,
+                                      void *data_end,
                                       struct flow_key *key)
 {
     struct ipv6_hdr *ip = cursor;
     __u8 next_header;
     __u32 payload_length;
-    void *packet_end;
+    __u32 offset;
+    __u32 remaining;
 
     if ((void *)(ip + 1) > data_end ||
         (__builtin_bswap32(ip->version_class_flow) >> 28) != 6)
         return 0;
     payload_length = ntohs(ip->payload_length);
     /* IPv6 jumbograms require hop-by-hop option parsing that is not supported. */
-    if (payload_length == 0 || (void *)(ip + 1) + payload_length > data_end)
+    if (payload_length == 0 || network_offset + sizeof(*ip) > skb->len ||
+        payload_length > skb->len - network_offset - sizeof(*ip))
         return 0;
-    packet_end = (void *)(ip + 1) + payload_length;
 
     key->family = FLOW_FAMILY_IPV6;
     copy_addr(key->src_addr, ip->src, 16);
     copy_addr(key->dst_addr, ip->dst, 16);
     next_header = ip->next_header;
-    cursor = ip + 1;
+    offset = network_offset + sizeof(*ip);
+    remaining = payload_length;
 
 #pragma clang loop unroll(full)
     for (int i = 0; i < 6; i++) {
-        struct ipv6_ext_hdr *ext;
+        struct ipv6_ext_hdr ext;
         __u32 length;
 
         if (next_header == IPPROTO_TCP || next_header == IPPROTO_UDP) {
             key->protocol = next_header;
-            return parse_ports(cursor, packet_end, data_end, key);
+            return parse_ports(skb, offset, remaining, key);
         }
         if (next_header == IPPROTO_FRAGMENT) {
-            struct ipv6_fragment_hdr *fragment = cursor;
+            struct ipv6_fragment_hdr fragment;
 
-            if ((void *)(fragment + 1) > packet_end ||
-                (void *)(fragment + 1) > data_end)
+            if (remaining < sizeof(fragment) ||
+                bpf_skb_load_bytes(skb, offset, &fragment,
+                                   sizeof(fragment)) < 0)
                 return 0;
-            if (ntohs(fragment->fragment_offset) & 0xfff8)
+            if (ntohs(fragment.fragment_offset) & 0xfff8)
                 return 0;
-            next_header = fragment->next_header;
-            cursor = fragment + 1;
+            next_header = fragment.next_header;
+            offset += sizeof(fragment);
+            remaining -= sizeof(fragment);
             continue;
         }
         if (next_header != IPPROTO_HOPOPTS && next_header != IPPROTO_ROUTING &&
             next_header != IPPROTO_DSTOPTS && next_header != IPPROTO_AH)
             return 0;
 
-        ext = cursor;
-        if ((void *)(ext + 1) > packet_end ||
-            (void *)(ext + 1) > data_end)
+        if (remaining < sizeof(ext) ||
+            bpf_skb_load_bytes(skb, offset, &ext, sizeof(ext)) < 0)
             return 0;
-        length = next_header == IPPROTO_AH ? ((__u32)ext->length + 2) * 4
-                                           : ((__u32)ext->length + 1) * 8;
-        if (length < sizeof(*ext) || cursor + length > packet_end ||
-            cursor + length > data_end)
+        length = next_header == IPPROTO_AH ? ((__u32)ext.length + 2) * 4
+                                           : ((__u32)ext.length + 1) * 8;
+        if (length < sizeof(ext) || length > remaining)
             return 0;
-        next_header = ext->next_header;
-        cursor += length;
+        next_header = ext.next_header;
+        offset += length;
+        remaining -= length;
     }
     return 0;
 }
@@ -574,11 +582,13 @@ static __always_inline int observe(struct __sk_buff *skb, __u8 direction)
     struct eth_hdr *eth = data;
     struct flow_key key = {};
     __u16 protocol;
+    __u32 network_offset;
     void *cursor;
 
     if ((void *)(eth + 1) > data_end)
         return TC_ACT_OK;
     protocol = ntohs(eth->protocol);
+    network_offset = sizeof(*eth);
     cursor = eth + 1;
 
 #pragma clang loop unroll(full)
@@ -591,12 +601,15 @@ static __always_inline int observe(struct __sk_buff *skb, __u8 direction)
         if ((void *)(vlan + 1) > data_end)
             return TC_ACT_OK;
         protocol = ntohs(vlan->protocol);
+        network_offset += sizeof(*vlan);
         cursor = vlan + 1;
     }
 
     key.direction = direction;
-    if ((protocol == ETH_P_IP && parse_ipv4(cursor, data_end, &key)) ||
-        (protocol == ETH_P_IPV6 && parse_ipv6(cursor, data_end, &key))) {
+    if ((protocol == ETH_P_IP &&
+         parse_ipv4(skb, cursor, network_offset, data_end, &key)) ||
+        (protocol == ETH_P_IPV6 &&
+         parse_ipv6(skb, cursor, network_offset, data_end, &key))) {
         if (capture_allowed(key.family, key.protocol) &&
             host_address_allowed(&key) && !reply_to_client(&key)) {
             drop_ephemeral_source_port(&key);

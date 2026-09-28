@@ -1,5 +1,18 @@
 # 설치와 사용
 
+## 수정 빌드 적용 및 로그 확인
+
+바이너리와 `/usr/lib/net-scouter/flow.bpf.o`를 함께 교체해야 BPF 수정이 적용됩니다. `make build-all`은 deb 패키지를 갱신하지 않습니다. 같은 릴리스의 수정 패키지는 `DEB_REVISION=2 make deb`처럼 revision을 지정해 새로 빌드하십시오. 실제 버전과 파일 경로는 `dist/deb/latest.env`에서 확인합니다.
+
+```bash
+sudo apt install ./net-scouter_0.1.5-1_amd64.deb
+sudo systemctl restart net-scouter
+sudo net-scouter status
+sudo journalctl -u net-scouter -n 100 --no-pager
+```
+
+파일명은 생성된 패키지에 맞춰 바꾸십시오. 같은 버전을 재설치할 때는 `apt install --reinstall`을 사용합니다. 서비스가 이전 직접 설치본을 실행하는지 확인하려면 `systemctl show net-scouter -p ExecStart -p FragmentPath`를 실행합니다. deb의 실행 파일은 `/usr/bin/net-scouter`입니다. BPF verifier 오류가 나면 수정된 바이너리가 출력하는 전체 로그와 `uname -r` 결과를 함께 확인하십시오.
+
 Rocky Linux 8.10 / RHEL 8 계열과 Ubuntu 22.04 이상을 대상으로 합니다. 배포판 버전보다 커널의 eBPF, BTF, TC 기능이 중요합니다. 패키지는 서비스를 자동으로 시작하지 않습니다.
 
 ## Ubuntu
@@ -122,7 +135,7 @@ sudo net-scouter flows --format jsonl
 
 ## 패키지를 만들 때
 
-릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.4`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
+릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.5`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
 
 BPF 컴파일은 로컬 이미지 `net-scouter-deb-build:22.04`와 `net-scouter-rpm-build:8`을 사용합니다. 없으면 한 번 만들고, 이후에는 다시 받지 않습니다. Dockerfile을 바꾸면 `make package-images`로 다시 만듭니다.
 
