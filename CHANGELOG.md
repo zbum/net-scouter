@@ -2,7 +2,7 @@
 
 이 문서는 `net-scouter`의 사용자 관점 변경 사항을 기록한다.
 
-## [feature/durable-directional-filters] - 2026-09-28
+## [0.1.6] - 2026-09-28
 
 ### Added
 
