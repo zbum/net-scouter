@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/example/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/flow"
 )
 
 func DecodeRecord(k FlowKey, v FlowValue, wallNow time.Time, monotonicNow time.Duration) (flow.Record, error) {
@@ -27,5 +27,5 @@ func DecodeRecord(k FlowKey, v FlowValue, wallNow time.Time, monotonicNow time.D
 		return flow.Record{}, fmt.Errorf("unsupported address family %d", k.Family)
 	}
 	boot := wallNow.Add(-monotonicNow)
-	return flow.Record{SrcIP: src, DstIP: dst, SrcPort: k.SrcPort, DstPort: k.DstPort, Protocol: k.Protocol, Direction: flow.Direction(k.Direction), FirstSeen: boot.Add(time.Duration(v.FirstSeenNS)), LastSeen: boot.Add(time.Duration(v.LastSeenNS)), Packets: v.Packets, Bytes: v.Bytes, Connections: v.Connections}, nil
+	return flow.Record{SrcIP: src, DstIP: dst, SrcPort: k.SrcPort, DstPort: k.DstPort, Protocol: k.Protocol, Direction: flow.Direction(k.Direction), FirstSeen: boot.Add(time.Duration(v.FirstSeenNS)), LastSeen: boot.Add(time.Duration(v.LastSeenNS)), Packets: v.Packets, Bytes: v.Bytes, Connections: v.Connections, EpochNS: v.FirstSeenNS}, nil
 }

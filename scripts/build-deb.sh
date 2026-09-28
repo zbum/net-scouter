@@ -68,11 +68,13 @@ mkdir -p \
 	"$stage/DEBIAN" \
 	"$stage/usr/bin" \
 	"$stage/usr/lib/net-scouter" \
+	"$stage/usr/share/doc/net-scouter" \
 	"$stage/etc/net-scouter" \
 	"$stage/usr/lib/systemd/system"
 install -m 0755 "dist/net-scouter-linux-$GOARCH" "$stage/usr/bin/net-scouter"
 install -m 0644 dist/flow.bpf.o "$stage/usr/lib/net-scouter/flow.bpf.o"
 install -m 0644 configs/net-scouter.yaml "$stage/etc/net-scouter/net-scouter.yaml"
+install -m 0644 LICENSE "$stage/usr/share/doc/net-scouter/copyright"
 sed 's#/usr/local/bin/net-scouter#/usr/bin/net-scouter#' \
 	deploy/systemd/net-scouter.service \
 	> "$stage/usr/lib/systemd/system/net-scouter.service"
@@ -83,11 +85,11 @@ cat > "$stage/DEBIAN/control" <<EOF
 Package: net-scouter
 Version: $DEB_VERSION
 Architecture: $DEB_ARCH
-Maintainer: net-scouter <net-scouter@manty.co.kr>
+Maintainer: net-scouter contributors
 Installed-Size: $installed
 Section: net
 Priority: optional
-Homepage: https://nexus.manty.co.kr/repository/apt-hosted/
+Homepage: https://github.com/zbum/net-scouter
 Description: Low-overhead IPv4/IPv6 TCP and UDP flow discovery agent
  Observes directional IPv4/IPv6 TCP and UDP flows and keeps packet, byte,
  and local TCP connection counters in a bounded kernel map.
@@ -133,4 +135,10 @@ DEB_VERSION=$DEB_VERSION
 DEB_ARCH=$DEB_ARCH
 DEB_PATH=$deb_path
 EOF
+deb_name=$(basename "$deb_path")
+if command -v sha256sum >/dev/null 2>&1; then
+	(cd dist/deb && sha256sum "$deb_name" > "$deb_name.sha256")
+else
+	(cd dist/deb && shasum -a 256 "$deb_name" > "$deb_name.sha256")
+fi
 echo "built $deb_path"

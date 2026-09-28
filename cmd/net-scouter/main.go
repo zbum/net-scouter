@@ -10,13 +10,16 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
-	"github.com/example/net-scouter/internal/agent"
-	"github.com/example/net-scouter/internal/config"
-	loader "github.com/example/net-scouter/internal/ebpf"
-	"github.com/example/net-scouter/internal/platform"
-	"github.com/example/net-scouter/internal/query"
+	"github.com/zbum/net-scouter/internal/agent"
+	"github.com/zbum/net-scouter/internal/config"
+	loader "github.com/zbum/net-scouter/internal/ebpf"
+	"github.com/zbum/net-scouter/internal/metrics"
+	"github.com/zbum/net-scouter/internal/platform"
+	"github.com/zbum/net-scouter/internal/query"
+	"github.com/zbum/net-scouter/internal/storage"
 )
 
 func main() {
@@ -116,8 +119,37 @@ func run(args []string) (runErr error) {
 	if err != nil {
 		return err
 	}
+	if err := a.SetDirectionalExclusions(
+		agent.DirectionExclusions{Sources: cfg.Exclude.Ingress.Sources, Destinations: cfg.Exclude.Ingress.Destinations},
+		agent.DirectionExclusions{Sources: cfg.Exclude.Egress.Sources, Destinations: cfg.Exclude.Egress.Destinations},
+	); err != nil {
+		return err
+	}
 	a.SetRuntime(cfg.Interfaces, enabled, abi, detail)
 	a.SetCapture(*cfg.Capture.IPv4, *cfg.Capture.IPv6, *cfg.Capture.TCP, *cfg.Capture.UDP)
+	if cfg.Export.Type == "stdout" {
+		a.EnableLegacyStdout()
+	}
+	switch cfg.Mode {
+	case "exporter":
+		if err := a.ConfigureExporter(metrics.New(cfg.Exporter.Listen, cfg.Exporter.MaxFlows), cfg.Exporter.MaxFlows); err != nil {
+			return err
+		}
+	case "persistent":
+		if err := os.MkdirAll(filepath.Dir(cfg.Storage.Path), 0o700); err != nil {
+			return fmt.Errorf("create storage directory: %w", err)
+		}
+		store, err := storage.Open(cfg.Storage.Path, storage.Options{MaxBytes: cfg.Storage.MaxBytes})
+		if err != nil {
+			return err
+		}
+		defer func() { runErr = errors.Join(runErr, store.Close()) }()
+		if err := a.ConfigurePersistent(store, cfg.Storage.Path, cfg.Storage.FlushInterval, storage.Retention{
+			InactiveTTL: cfg.Storage.Retention, MaxEntries: cfg.Storage.MaxEntries, MaxBytes: cfg.Storage.MaxBytes,
+		}); err != nil {
+			return err
+		}
+	}
 	if err := a.EnableStatusFile(query.DefaultStatusPath); err != nil {
 		return err
 	}
@@ -176,9 +208,19 @@ func flowsCmd(args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments")
 	}
-	result, err := query.LoadFlows(*socketPath)
+	load := query.LoadFlows
+	if *attempts {
+		load = query.LoadFlowAttempts
+	}
+	result, err := load(*socketPath)
 	if err != nil {
-		return err
+		if !errors.Is(err, query.ErrAgentUnavailable) {
+			return err
+		}
+		result, err = offlineFlows(*configPath)
+		if err != nil {
+			return err
+		}
 	}
 	result, err = query.FilterProtocol(result, *protocol)
 	if err != nil {
@@ -195,4 +237,34 @@ func flowsCmd(args []string) error {
 	}
 	_, err = io.WriteString(os.Stdout, text)
 	return err
+}
+
+func offlineFlows(configPath string) (query.FlowsResult, error) {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return query.FlowsResult{}, fmt.Errorf("offline flows require a readable config: %w", err)
+	}
+	if cfg.Mode != "persistent" {
+		return query.FlowsResult{}, fmt.Errorf("exporter mode has no flow history after the agent stops")
+	}
+	store, err := storage.OpenReadOnly(cfg.Storage.Path)
+	if err != nil {
+		return query.FlowsResult{}, err
+	}
+	defer store.Close()
+	records, err := store.Load()
+	if err != nil {
+		return query.FlowsResult{}, err
+	}
+	records, err = agent.FilterHistoricalRecords(records, cfg.Exclude.Destinations, cfg.Exclude.WorkloadCIDRs,
+		agent.DirectionExclusions{Sources: cfg.Exclude.Ingress.Sources, Destinations: cfg.Exclude.Ingress.Destinations},
+		agent.DirectionExclusions{Sources: cfg.Exclude.Egress.Sources, Destinations: cfg.Exclude.Egress.Destinations})
+	if err != nil {
+		return query.FlowsResult{}, err
+	}
+	result := query.PrepareFlows(records, true, "historical", "")
+	result.HistoricalConnections = true
+	result.ConnectionABI = ""
+	result.DurableStorage = query.DurableReady
+	return result, nil
 }

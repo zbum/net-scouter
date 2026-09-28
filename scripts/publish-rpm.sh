@@ -8,7 +8,7 @@ cd "$root"
 
 : "${NEXUS_USER:?set NEXUS_USER}"
 : "${NEXUS_PASS:?set NEXUS_PASS}"
-NEXUS_URL="${NEXUS_URL:-https://nexus.manty.co.kr}"
+: "${NEXUS_URL:?set NEXUS_URL to the package repository base URL}"
 NEXUS_YUM_REPO="${NEXUS_YUM_REPO:-yum-hosted}"
 NEXUS_URL=${NEXUS_URL%/}
 
@@ -22,6 +22,16 @@ rpm_file="$root/$RPM_PATH"
 if [[ ! -f "$rpm_file" ]]; then
 	echo "missing $rpm_file" >&2
 	exit 1
+fi
+checksum_file="$rpm_file.sha256"
+if [[ ! -f "$checksum_file" ]]; then
+	echo "missing $checksum_file" >&2
+	exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+	(cd "$(dirname "$rpm_file")" && sha256sum --check "$(basename "$checksum_file")")
+else
+	(cd "$(dirname "$rpm_file")" && shasum -a 256 --check "$(basename "$checksum_file")")
 fi
 
 name=$(basename "$rpm_file")
@@ -71,18 +81,9 @@ fi
 cat <<EOF
 yum metadata contains $name
 
-Install on Rocky or RHEL:
-
-cat >/etc/yum.repos.d/net-scouter.repo <<'REPO'
-[net-scouter]
-name=net-scouter
-baseurl=$repo_url
-enabled=1
-gpgcheck=0
-REPO
-dnf clean metadata
-dnf install net-scouter
-
-The RPM is not signed. It does not enable the service.
-Edit /etc/net-scouter/net-scouter.yaml before starting net-scouter.service.
+The RPM is currently unsigned. Do not publish installation instructions that
+disable signature verification. Distribute the RPM with its generated
+.sha256 file over a
+trusted channel, or configure RPM signing and publish the signing key before
+enabling repository installation.
 EOF

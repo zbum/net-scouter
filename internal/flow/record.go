@@ -56,12 +56,23 @@ type Record struct {
 	Packets     uint64     `json:"packets"`
 	Bytes       uint64     `json:"bytes"`
 	Connections uint64     `json:"connections,omitempty"`
+	EpochNS     uint64     `json:"-"`
 }
 
 // ForACL keeps firewall rules and drops the return path.
 // Ingress keeps the destination port. Egress keeps the destination port of a
 // connection this host opened. Packets this host sends back to a client are removed.
 func ForACL(records []Record) []Record {
+	return collapseSameKey(forACLRaw(records, false))
+}
+
+// ForACLRaw applies return-path selection while preserving source ports for
+// per-kernel-entry counter delta accounting.
+func ForACLRaw(records []Record) []Record {
+	return forACLRaw(records, true)
+}
+
+func forACLRaw(records []Record, preserveSourcePort bool) []Record {
 	const ephemeral = 32768
 	type peer struct {
 		src, dst  netip.Addr
@@ -89,10 +100,12 @@ func ForACL(records []Record) []Record {
 		if returnPath {
 			continue
 		}
-		record.SrcPort = 0
+		if !preserveSourcePort {
+			record.SrcPort = 0
+		}
 		kept = append(kept, record)
 	}
-	return collapseSameKey(kept)
+	return kept
 }
 
 // CollapseTCPSourcePorts merges TCP rows that differ only by source port.

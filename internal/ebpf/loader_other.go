@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 
-	"github.com/example/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/flow"
 )
 
 type Loader struct{}

@@ -11,23 +11,49 @@ import (
 	"sync"
 	"time"
 
-	"github.com/example/net-scouter/internal/flow"
-	"github.com/example/net-scouter/internal/query"
+	"github.com/zbum/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/metrics"
+	"github.com/zbum/net-scouter/internal/query"
+	"github.com/zbum/net-scouter/internal/storage"
 )
 
 type Snapshotter interface{ Snapshot() ([]flow.Record, error) }
 
 type Agent struct {
-	source        Snapshotter
-	output        io.Writer
-	interval      time.Duration
-	maxFlows      uint32
-	destinations  []netip.Prefix
-	workloads     []netip.Prefix
-	hostAddresses map[netip.Addr]struct{}
-	previous      map[flowIdentity]cacheEntry
-	generation    uint64
-	cacheLimit    int
+	source             Snapshotter
+	output             io.Writer
+	interval           time.Duration
+	maxFlows           uint32
+	destinations       []netip.Prefix
+	workloads          []netip.Prefix
+	ingress            endpointPrefixes
+	egress             endpointPrefixes
+	hostAddresses      map[netip.Addr]struct{}
+	previous           map[flowIdentity]cacheEntry
+	generation         uint64
+	cacheLimit         int
+	mode               string
+	legacyStdout       bool
+	metrics            *metrics.Exporter
+	metricsLimit       uint32
+	store              flowStore
+	storagePath        string
+	flushInterval      time.Duration
+	retention          storage.Retention
+	stored             map[storage.Key]flow.Record
+	dirtyKeys          map[storage.Key]struct{}
+	persistedKeys      map[storage.Key]struct{}
+	baselines          map[flowIdentity]rawBaseline
+	pendingDeletes     map[storage.Key]struct{}
+	lastFlush          time.Time
+	storageStats       storage.Stats
+	storageError       string
+	storageNeedsReload bool
+	counterRegression  bool
+	memoryEvictedTotal uint64
+	metricsPublished   int
+	metricsOmitted     int
+	metricsCollectedAt time.Time
 
 	mu             sync.Mutex
 	startedAt      time.Time
@@ -39,6 +65,13 @@ type Agent struct {
 	observedFrom   time.Time
 	observedTo     time.Time
 	lastError      string
+}
+
+// EnableLegacyStdout keeps explicit export.type=stdout configurations working.
+func (a *Agent) EnableLegacyStdout() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.legacyStdout = true
 }
 
 type captureSel struct {
@@ -55,7 +88,20 @@ type runtimeObs struct {
 	ConnectionDetail   string
 	Destinations       []string
 	WorkloadCIDRs      []string
+	Ingress            DirectionExclusions
+	Egress             DirectionExclusions
 	HostAddresses      []string
+}
+
+// DirectionExclusions holds CIDRs for either endpoint of one flow direction.
+type DirectionExclusions struct {
+	Sources      []string
+	Destinations []string
+}
+
+type endpointPrefixes struct {
+	sources      []netip.Prefix
+	destinations []netip.Prefix
 }
 
 type flowIdentity struct {
@@ -99,17 +145,22 @@ func New(source Snapshotter, output io.Writer, interval time.Duration, maxFlows 
 		hostAddressStrings = append(hostAddressStrings, addr.String())
 	}
 	return &Agent{
-		source:        source,
-		output:        output,
-		interval:      interval,
-		maxFlows:      maxFlows,
-		destinations:  dest,
-		workloads:     work,
-		hostAddresses: hostAddresses,
-		previous:      make(map[flowIdentity]cacheEntry),
-		cacheLimit:    int(maxFlows) * 3,
-		startedAt:     time.Now(),
-		capture:       captureSel{ipv4: true, ipv6: true, tcp: true, udp: true},
+		source:         source,
+		output:         output,
+		interval:       interval,
+		maxFlows:       maxFlows,
+		destinations:   dest,
+		workloads:      work,
+		hostAddresses:  hostAddresses,
+		previous:       make(map[flowIdentity]cacheEntry),
+		cacheLimit:     int(maxFlows) * 3,
+		stored:         make(map[storage.Key]flow.Record),
+		dirtyKeys:      make(map[storage.Key]struct{}),
+		persistedKeys:  make(map[storage.Key]struct{}),
+		pendingDeletes: make(map[storage.Key]struct{}),
+		baselines:      make(map[flowIdentity]rawBaseline),
+		startedAt:      time.Now(),
+		capture:        captureSel{ipv4: true, ipv6: true, tcp: true, udp: true},
 		obs: runtimeObs{
 			Destinations:  copyStrings(destinationCIDRs),
 			WorkloadCIDRs: copyStrings(workloadCIDRs),
@@ -131,12 +182,48 @@ func parsePrefixes(values []string) ([]netip.Prefix, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%q: %w", value, err)
 		}
+		if p.Addr().Is4In6() {
+			if p.Bits() < 96 {
+				return nil, fmt.Errorf("%q: IPv4-mapped IPv6 CIDR must have prefix length at least 96", value)
+			}
+			p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+		}
 		result = append(result, p.Masked())
 	}
 	return result, nil
 }
 
+// SetDirectionalExclusions applies ingress and egress CIDRs after validating all lists.
+func (a *Agent) SetDirectionalExclusions(ingress, egress DirectionExclusions) error {
+	parsed := [4][]netip.Prefix{}
+	for i, item := range []struct {
+		name   string
+		values []string
+	}{
+		{"ingress.sources", ingress.Sources},
+		{"ingress.destinations", ingress.Destinations},
+		{"egress.sources", egress.Sources},
+		{"egress.destinations", egress.Destinations},
+	} {
+		prefixes, err := parsePrefixes(item.values)
+		if err != nil {
+			return fmt.Errorf("%s exclusions: %w", item.name, err)
+		}
+		parsed[i] = prefixes
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.ingress = endpointPrefixes{parsed[0], parsed[1]}
+	a.egress = endpointPrefixes{parsed[2], parsed[3]}
+	a.obs.Ingress = DirectionExclusions{copyStrings(ingress.Sources), copyStrings(ingress.Destinations)}
+	a.obs.Egress = DirectionExclusions{copyStrings(egress.Sources), copyStrings(egress.Destinations)}
+	return nil
+}
+
 func (a *Agent) Run(ctx context.Context) error {
+	if a.mode != "" {
+		return a.runConfigured(ctx)
+	}
 	if err := a.export(); err != nil {
 		return err
 	}
@@ -291,14 +378,36 @@ func (a *Agent) SetCapture(ipv4, ipv6, tcp, udp bool) {
 
 func (a *Agent) excluded(r flow.Record) bool {
 	for _, prefix := range a.destinations {
-		if prefix.Contains(r.DstIP) {
+		if prefix.Contains(r.DstIP.Unmap()) {
 			return true
 		}
 	}
 	sourceWorkload, destinationWorkload := false, false
 	for _, prefix := range a.workloads {
-		sourceWorkload = sourceWorkload || prefix.Contains(r.SrcIP)
-		destinationWorkload = destinationWorkload || prefix.Contains(r.DstIP)
+		sourceWorkload = sourceWorkload || prefix.Contains(r.SrcIP.Unmap())
+		destinationWorkload = destinationWorkload || prefix.Contains(r.DstIP.Unmap())
 	}
-	return sourceWorkload && destinationWorkload
+	if sourceWorkload && destinationWorkload {
+		return true
+	}
+	var rules endpointPrefixes
+	switch r.Direction {
+	case flow.DirectionIngress:
+		rules = a.ingress
+	case flow.DirectionEgress:
+		rules = a.egress
+	default:
+		return true
+	}
+	for _, prefix := range rules.sources {
+		if prefix.Contains(r.SrcIP.Unmap()) {
+			return true
+		}
+	}
+	for _, prefix := range rules.destinations {
+		if prefix.Contains(r.DstIP.Unmap()) {
+			return true
+		}
+	}
+	return false
 }

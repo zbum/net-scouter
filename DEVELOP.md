@@ -42,18 +42,22 @@
                       |
           +-----------+-----------+
           |                       |
-   /run query socket            stdout JSONL
-          |
-     net-scouter flows/status
+   /run query socket       mode-specific sink
+          |               exporter: /metrics
+     flows/status          persistent: bbolt DB
 ```
 
 첫 구현은 XDP가 아니라 TC ingress/egress다. 목적은 관찰이지 패킷 필터링이 아니다.
 
 Go 에이전트가 오브젝트를 읽고, 설정한 인터페이스에만 붙인다. 시작 시 선택한 모든 NIC의 활성 IP family 주소를 조회해 BPF `host_addrs` map에 넣는다. TC와 TCP tracepoint는 로컬 끝점이 이 주소 집합에 속하는 흐름만 집계한다. 선택한 NIC를 읽을 수 없거나 활성 family 주소가 전혀 없으면 수집을 시작하지 않는다. 이미 붙인 TC 자원은 종료 경로에서 정리되며 패킷은 언제나 통과한다. IP를 바꾼 뒤에는 에이전트를 재시작해 주소 집합을 다시 읽어야 한다. TCP 연결 수는 `sock:inet_sock_set_state`의 `TCP_ESTABLISHED` 전이로 센다. tracefs format을 읽어 Linux 4.18(`protocol` u8, 주소 offset 31)과 5.15(`protocol` u16, 주소 offset 32) 중 맞는 variant 하나만 붙인다. 둘 다 붙이지 않는다. ABI를 모르면 연결 수만 끄고 패킷과 바이트 수집은 계속하지만, 기본 TCP 결과와 stdout export는 성공 여부가 확인되지 않은 행을 숨긴다.
 
-집계 맵은 `BPF_MAP_TYPE_LRU_HASH`다. 기본 `maxFlows`는 65536이고 시작 때 그 크기만큼 잡는다. 키와 값을 합쳐 항목당 약 150바이트 안쪽이라 전체는 10MB 안팎이다. 꽉 차면 가장 오래 안 보인 항목을 버린다. 맵은 프로세스와 함께 사라진다. 파일이나 DBMS에 흐름을 남기지 않는다. 이 저장소 선택은 ADR-004가 승인되기 전에는 구현하지 않는다.
+집계 맵은 `BPF_MAP_TYPE_LRU_HASH`다. 기본 `maxFlows`는 65536이고 시작 때 그 크기만큼 잡는다. 키와 값을 합쳐 항목당 약 150바이트 안쪽이라 전체는 10MB 안팎이다. 꽉 차면 가장 오래 안 보인 항목을 버린다. 맵은 프로세스와 함께 사라진다. Go 에이전트는 각 raw map entry의 `FirstSeenNS` epoch와 counter high-water를 기억하고 증가분만 ACL 키로 합친다. TCP는 성립 횟수가 있는 행만 집계하며 UDP는 패킷 기준으로 집계한다. 카운터 감소는 이전 상한을 유지하고 `possible loss`로 알린다.
 
-표준출력은 바뀐 누적 행만 JSON Lines로 낸다. `export.type`은 `stdout`만 허용한다. `flows`와 `status`는 `/run/net-scouter/query.sock`으로 실행 중인 에이전트에 물어본다. 소켓이 없으면 `status`만 `/run/net-scouter/status.json`을 읽고, pid가 없으면 오래된 상태로 표시한다.
+`mode: exporter`는 기본이며 메모리 누적값을 미리 렌더링해 `127.0.0.1:9469/metrics`로 제공한다. scrape는 BPF map을 읽지 않는다. `exporter.maxFlows`의 기본값은 4096개이고, 넘치는 행은 metrics에서 생략한다. 저장 파일은 만들지 않는다. `mode: persistent`는 HTTP 포트를 열지 않고 bbolt DB(`/var/lib/net-scouter/flows.db`)를 5분마다 절대값으로 갱신한다. 정상 종료에는 마지막 snapshot과 flush를 수행한다. 실패한 flush는 메모리 누적값을 유지하고 재시도하며 status를 degraded로 만든다. 보존은 마지막 관찰 후 720시간 비활성 TTL과 최대 65536행이다. 64MiB `maxBytes`는 물리 파일 크기 경고 기준이다. systemd는 상태 디렉터리 `0700`, DB는 `0600`으로 만든다.
+
+`flows`와 `status`는 `/run/net-scouter/query.sock`으로 실행 중인 에이전트에 물어본다. 기본 `flows`는 누적값을 보여 준다. `--attempts`는 현재 BPF snapshot의 packet-only 시도도 보여 주는 별도 진단 조회다. 소켓이 없으면 `status`는 `/run/net-scouter/status.json`을 읽고, persistent 모드의 `flows`는 DB를 읽는다. exporter 모드에는 오프라인 이력이 없다. 이전 `export.type: stdout`을 명시한 설정은 변경된 누적 행 JSONL을 추가 출력한다.
+
+CIDR 제외는 snapshot의 공통 filter에서 raw counter delta 집계 전에 적용한다. `exclude.ingress`와 `exclude.egress`는 각 방향의 `sources`·`destinations` 중 하나가 일치하면 제외한다. 기존 `exclude.destinations`는 모든 방향의 목적지에, `exclude.workloadCIDRs`는 양쪽 끝점이 CIDR 집합에 속할 때 적용한다. 저장된 과거 행도 현재 CIDR 규칙으로 다시 필터링하지만 현재 NIC 주소로 과거 행을 제거하지 않는다. 원본 BPF 집계 맵에는 제외된 행이 남을 수 있다.
 
 ## 흐름 모델
 
@@ -84,8 +88,8 @@ protocol + direction + src IP + dst IP + service port
 예시:
 
 ```text
-192.168.31.1 -> 192.168.31.102 TCP ingress 22
-192.168.31.102 -> 8.8.8.8 UDP egress 53
+192.0.2.10 -> 198.51.100.20 TCP ingress 22
+198.51.100.20 -> 203.0.113.53 UDP egress 53
 ```
 
 패킷과 바이트는 4.18에서 되는 atomic add를 쓴다. `first_seen`은 맵에 처음 넣은 CPU의 시각이다. `last_seen`은 동시 CPU에서 순서가 바뀔 수 있는 best-effort다. 더 새 BPF CMPXCHG는 쓰지 않는다.
@@ -114,15 +118,15 @@ NAT가 있으면 관찰 위치가 SNAT/DNAT 앞인지 뒤인지에 따라 주소
 - 커널 LRU 집계, firstSeen/lastSeen, 패킷/바이트
 - Linux 4.18와 5.15 TCP established 카운터
 - ACL 조회, 프로토콜 필터, 성립한 TCP만 보기, 로컬 흐름 숨기기
-- 목적지 CIDR 제외, 양쪽이 맞는 workload CIDR 제외
-- stdout JSONL
+- 방향별 source/destination CIDR 제외, 양쪽이 맞는 workload CIDR 제외
+- exporter 모드 Prometheus metrics, persistent 모드 재시작 후 이력 보존
+- 명시적 레거시 stdout JSONL
 - systemd unit
 - Nexus yum/apt 패키지 게시
 
 ### 아직 없는 것
 
 - ICMP/ICMPv6
-- 재시작 후에도 남는 저장소
 - 중앙 수집기, 기존 ACL과 비교, IP 이전 보고서
 - DNS 보강, PID/프로세스/컨테이너 귀속
 - Web UI, 알림
@@ -139,7 +143,9 @@ net-scouter/
 ├── internal/ebpf/         로더와 TC attach
 ├── internal/flow/         흐름 모델과 ACL 축소
 ├── internal/query/        flows/status 표현과 필터
-├── internal/exporter/     stdout JSONL
+├── internal/metrics/      캐시된 Prometheus exporter
+├── internal/storage/      bbolt 영속 저장과 보존 정책
+├── internal/exporter/     레거시 stdout JSONL
 ├── internal/platform/     커널 기능 확인
 ├── bpf/                   eBPF C
 ├── configs/               설정 예
@@ -154,6 +160,7 @@ net-scouter/
 ## 빌드
 
 사용자 공간은 Go, 커널 센서는 eBPF C다. `cilium/ebpf`가 미리 컴파일한 `flow.bpf.o`를 읽는다.
+사용자 공간 빌드에는 Go 1.26 이상이 필요하다. `make check-go-version`으로 설치된 Go를 확인할 수 있으며, 모든 Go 빌드와 테스트는 이 검사를 먼저 실행한다.
 
 ```text
 bpf/flow.bpf.c
@@ -183,17 +190,17 @@ IPv4/IPv6 파서는 IP 헤더가 선언한 길이와 skb 경계를 넘지 않는
 
 ## CI
 
-Jenkinsfile은 `linux && amd64 && ubuntu-build` 노드와 `linux && amd64 && rocky-build` 노드에서 두 빌드를 병렬로 실행한다. 두 노드 모두 Git, Go, Make, Docker, `file`, Clang이 필요하며, 빌드 시작 즉시 도구와 Docker daemon을 점검한다.
+Jenkinsfile은 `linux && amd64 && ubuntu-build` 노드와 `linux && amd64 && rocky-build` 노드에서 두 빌드를 병렬로 실행한다. 두 노드 모두 Git, Go 1.26 이상, Make, Docker, `file`, Clang이 필요하며, 빌드 시작 즉시 도구, Go 버전과 Docker daemon을 점검한다. Go 바이너리는 호스트 Jenkins 노드에서 빌드하고 패키지 Docker 이미지는 BPF와 배포 패키지 생성에 사용하므로, 두 Jenkins 노드 자체에 Go 1.26 이상을 설치해야 한다.
 
 `release/<version>` 브랜치는 루트 `VERSION`과 버전이 같아야 한다. Jenkins는 다르면 빌드를 중단하고, 같으면 빌드 표시명을 `#<build> v<version>`으로 설정한다.
 
 Ubuntu 노드는 `make test`와 `make deb`를 실행하고 Linux 바이너리, BPF 오브젝트, checksum, deb 패키지를 보관한다. Rocky 노드는 `make test`와 `make rpm`을 실행하고 만든 바이너리의 `check`를 직접 실행한 뒤 rpm 패키지를 보관한다. 배포판별 BPF와 패키지 빌드는 각각 Ubuntu 22.04와 Rocky Linux 8 Docker 이미지 안에서 이루어진다.
 
-`release/*` 브랜치에서 두 빌드가 모두 성공하면 Jenkins의 username/password 자격증명 `nexus-credentials`를 사용해 deb와 rpm을 각각 Nexus에 게시한다. 다른 자격증 ID는 `NEXUS_CREDENTIALS_ID` 빌드 파라미터로 지정한다. 빌드 및 메타데이터 확인이 끝난 산출물만 게시하며 게시 단계에서 다시 빌드하지 않는다.
+`release/*` 브랜치에서 두 빌드가 모두 성공하면 Jenkins에 고정된 전용 username/password 자격증명으로 deb와 rpm을 패키지 저장소에 게시한다. 자격증명 ID와 노드 라벨은 빌드 파라미터로 받지 않는다. change request에서는 저장소 코드를 실행하거나 게시·커널 verifier 단계를 수행하지 않는다. 빌드 및 메타데이터 확인이 끝난 산출물만 게시하며 게시 단계에서 다시 빌드하지 않는다.
 
 그 다음은 역할이 나뉜다.
 
-1. `RUN_KERNEL_VERIFIERS`를 켠 경우에만 Ubuntu 22.04+와 Rocky 8.10+ verifier 노드가 `sudo -n make verify-bpf-load`를 실행한다. 기본은 꺼져 있다. 노드는 `bpftool`, `/sys/fs/bpf`, 그 명령에 대한 passwordless sudo가 필요하다.
+1. `RUN_KERNEL_VERIFIERS`를 켠 신뢰 브랜치에서만 Ubuntu 22.04+와 Rocky 8.10+ verifier 노드가 root 소유의 `/usr/local/sbin/net-scouter-verify-bpf-load`를 실행한다. 기본은 꺼져 있다. 이 고정 스크립트만 passwordless sudo로 허용하며 checkout의 Makefile이나 스크립트를 root로 실행하지 않는다.
 2. `make verify-bpf-load`는 TC classifier 둘과 tracepoint variant 둘을 로드하고 pin을 확인한 뒤 바로 지운다. `tc`를 실행하거나 인터페이스와 tracepoint에 붙이지 않는다.
 
 로컬에서 Rocky 8 사용자 공간 호환성을 보려면 Docker가 필요하다. 권한과 네트워크를 제거한 컨테이너에서 `flows --help`를 실행해 바이너리가 로드되는지 확인한다. Docker Hub에는 `rockylinux:8.10` 태그가 없으므로 `rockylinux:8`을 사용한다.
@@ -204,16 +211,16 @@ make build-linux verify-rocky-userspace
 
 ## 패키지 게시
 
-`NEXUS_USER`와 `NEXUS_PASS`가 없으면 게시 타깃은 빌드를 시작하지 않는다.
+`NEXUS_URL`, `NEXUS_USER`, `NEXUS_PASS`가 없으면 게시 타깃은 빌드를 시작하지 않는다. 실제 저장소 URL과 자격증명은 공개 저장소가 아니라 Jenkins 또는 로컬 비밀 설정에서 주입한다.
 
 ```bash
-NEXUS_USER=... NEXUS_PASS=... make publish-deb
-NEXUS_USER=... NEXUS_PASS=... make publish-rpm
+NEXUS_URL=https://packages.example.net NEXUS_USER=... NEXUS_PASS=... make publish-deb
+NEXUS_URL=https://packages.example.net NEXUS_USER=... NEXUS_PASS=... make publish-rpm
 ```
 
 릴리스 버전은 루트 `VERSION`이다. `release/<version>` 브랜치에서만 올리고, 그 브랜치를 `main`과 `develop`에 `--no-ff`로 머지한 뒤 `v<version>` 태그를 `main`에 단다. 현재 릴리스는 `0.1.4`이다. `VERSION`이 없으면 `scripts/package-version.sh`가 개발용 `0.0.0+UTC시각.git해시`를 내며, 작업 트리가 더러우면 `.dirty`가 붙는다. apt와 dnf는 이 개발 버전도 이전 `0+git` 패키지보다 새 것으로 정렬한다.
 
-yum은 `https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/`에 PUT한다. repodata depth는 1이다. apt는 `apt-hosted`에 컴포넌트 API로 POST한다. Distribution이 `stable`이 아니면 `dists/stable/.../Packages`에 나타나지 않는다. Nexus는 apt 메타데이터만 서명하고 deb 파일 자체는 서명하지 않는다.
+yum 게시 경로는 `${NEXUS_URL}/repository/${NEXUS_YUM_REPO}/net-scouter/`이고 repodata depth는 1이다. apt는 `${NEXUS_APT_REPO}`에 컴포넌트 API로 POST한다. Distribution이 `${NEXUS_APT_DISTRIBUTION}`과 다르면 기대한 package list에 나타나지 않는다. apt 메타데이터 서명 여부는 저장소 운영 설정에 달려 있으며 deb 파일 자체의 서명과는 별개다.
 
 ## 개발 방향
 

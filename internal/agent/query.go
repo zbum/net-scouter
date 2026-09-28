@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/example/net-scouter/internal/flow"
-	"github.com/example/net-scouter/internal/query"
+	"github.com/zbum/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/query"
 )
 
 func (a *Agent) SetRuntime(interfaces []string, connectionsEnabled bool, abi, detail string) {
@@ -100,15 +100,53 @@ func (a *Agent) handleQuery(conn net.Conn) {
 		} else {
 			resp = query.Response{OK: true, Flows: &flows}
 		}
+	case "flows_attempts":
+		flows, err := a.FlowAttempts()
+		if err != nil {
+			resp = query.Response{Error: err.Error()}
+		} else {
+			resp = query.Response{OK: true, Flows: &flows}
+		}
 	default:
 		resp = query.Response{Error: "unknown command " + req.Cmd}
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
 }
 
+// FlowAttempts includes current packet-only TCP rows for diagnostics.
+func (a *Agent) FlowAttempts() (query.FlowsResult, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	raw, err := a.source.Snapshot()
+	if err != nil {
+		a.lastError = err.Error()
+		return query.FlowsResult{}, fmt.Errorf("snapshot flows: %w", err)
+	}
+	if a.mode != "" {
+		if err := a.ingestLocked(raw); err != nil {
+			return query.FlowsResult{}, err
+		}
+	}
+	a.mapEntries = len(raw)
+	a.lastSnapshotAt = time.Now()
+	records := a.visible(raw)
+	result := query.PrepareFlows(records, a.obs.ConnectionsEnabled, a.obs.ConnectionABI, a.obs.ConnectionDetail)
+	result.DurableStorage = a.statusLocked().DurableStorage
+	_ = query.WriteStatus(a.statusPath, a.statusLocked())
+	return result, nil
+}
+
 func (a *Agent) Status() query.Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.mode != "" {
+		if _, err := a.observeLocked(); err != nil {
+			a.lastError = err.Error()
+		}
+		st := a.statusLocked()
+		_ = query.WriteStatus(a.statusPath, st)
+		return st
+	}
 	records, err := a.source.Snapshot()
 	if err != nil {
 		a.lastError = err.Error()
@@ -124,6 +162,26 @@ func (a *Agent) Status() query.Status {
 func (a *Agent) Flows() (query.FlowsResult, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.mode != "" {
+		records, err := a.observeLocked()
+		if err != nil {
+			a.lastError = err.Error()
+			_ = query.WriteStatus(a.statusPath, a.statusLocked())
+			return query.FlowsResult{}, err
+		}
+		_ = query.WriteStatus(a.statusPath, a.statusLocked())
+		available := a.obs.ConnectionsEnabled
+		for _, record := range records {
+			if record.Protocol == 6 && record.Connections > 0 {
+				available = true
+				break
+			}
+		}
+		result := query.PrepareFlows(records, available, a.obs.ConnectionABI, a.obs.ConnectionDetail)
+		result.HistoricalConnections = available && !a.obs.ConnectionsEnabled
+		result.DurableStorage = a.statusLocked().DurableStorage
+		return result, nil
+	}
 	records, err := a.source.Snapshot()
 	if err != nil {
 		a.lastError = err.Error()
@@ -147,7 +205,8 @@ func (a *Agent) applySnapshot(raw []flow.Record) ([]flow.Record, query.Status) {
 func (a *Agent) statusLocked() query.Status {
 	entries := a.mapEntries
 	atCapacity := a.maxFlows > 0 && uint32(entries) >= a.maxFlows
-	return query.Status{
+	st := query.Status{
+		Mode:           a.mode,
 		Live:           true,
 		Running:        true,
 		Source:         "agent",
@@ -163,7 +222,7 @@ func (a *Agent) statusLocked() query.Status {
 			Entries:      entries,
 			MaxEntries:   a.maxFlows,
 			AtCapacity:   atCapacity,
-			PossibleLoss: atCapacity,
+			PossibleLoss: atCapacity || a.counterRegression,
 		},
 		Connections: query.ConnectionStatus{
 			Enabled: a.obs.ConnectionsEnabled,
@@ -173,11 +232,42 @@ func (a *Agent) statusLocked() query.Status {
 		Exclude: query.ExcludeStatus{
 			Destinations:  copyStrings(a.obs.Destinations),
 			WorkloadCIDRs: copyStrings(a.obs.WorkloadCIDRs),
+			Ingress: query.DirectionExclusions{
+				Sources: copyStrings(a.obs.Ingress.Sources), Destinations: copyStrings(a.obs.Ingress.Destinations),
+			},
+			Egress: query.DirectionExclusions{
+				Sources: copyStrings(a.obs.Egress.Sources), Destinations: copyStrings(a.obs.Egress.Destinations),
+			},
 		},
-		DurableStorage: query.DurableUnavailable,
-		DurableReason:  query.DurableReason,
-		LastError:      a.lastError,
+		DurableStorage:     query.DurableUnavailable,
+		DurableReason:      query.DurableReason,
+		MemoryEvictedTotal: a.memoryEvictedTotal,
+		LastError:          a.lastError,
 	}
+	switch a.mode {
+	case "exporter":
+		st.DurableStorage = query.DurableDisabled
+		st.DurableReason = "exporter mode keeps flows in memory only"
+		st.Exporter = query.ExporterStatus{
+			Listen: a.metrics.Addr(), Published: a.metricsPublished, Omitted: a.metricsOmitted, LastCollection: a.metricsCollectedAt,
+		}
+	case "persistent":
+		st.DurableStorage = query.DurableReady
+		st.DurableReason = ""
+		if a.storageError != "" {
+			st.DurableStorage = query.DurableDegraded
+			st.DurableReason = a.storageError
+		}
+		st.Storage = query.StorageStatus{
+			Path: a.storagePath, Schema: 1, LastFlush: a.lastFlush,
+			Entries: a.storageStats.Entries, FileBytes: a.storageStats.FileBytes,
+			MaxEntries: a.retention.MaxEntries, MaxBytes: a.retention.MaxBytes,
+			OverMaxBytes: a.storageStats.OverMaxBytes, Retention: a.retention.InactiveTTL.String(),
+			ExpiredTotal: a.storageStats.ExpiredTotal, EvictedTotal: a.storageStats.EvictedTotal,
+			Error: a.storageError,
+		}
+	}
+	return st
 }
 
 func observationWindow(records []flow.Record) (time.Time, time.Time) {

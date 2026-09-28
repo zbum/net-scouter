@@ -3,6 +3,8 @@ kind: DaemonSet
 metadata:
   name: net-scouter
   namespace: kube-system
+  annotations:
+    net-scouter.io/example-warning: "Privileged host-observer example; review before production use"
 spec:
   selector:
     matchLabels:
@@ -12,11 +14,16 @@ spec:
       labels:
         app: net-scouter
     spec:
+      # eBPF/TC attachment needs host access. This example grants broad privileges
+      # and is not a production security baseline. Restrict it for your kernel,
+      # admission policy, and runtime before deployment.
       hostNetwork: true
-      hostPID: true
       containers:
         - name: net-scouter
-          image: net-scouter:dev
+          # Required: replace this non-runnable placeholder with a trusted digest.
+          image: registry.example/net-scouter@sha256:REPLACE_WITH_TRUSTED_IMAGE_DIGEST
+          imagePullPolicy: IfNotPresent
           args: ["run", "--config", "/etc/net-scouter/net-scouter.yaml"]
           securityContext:
             privileged: true
+            runAsNonRoot: false

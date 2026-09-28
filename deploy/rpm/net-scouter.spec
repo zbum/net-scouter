@@ -8,9 +8,14 @@ Version:        %{ns_version}
 Release:        %{ns_release}
 Summary:        Low-overhead IPv4/IPv6 TCP and UDP flow discovery agent
 License:        GPL-2.0-only
-URL:            https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/
+URL:            https://github.com/zbum/net-scouter
 BuildArch:      %{ns_arch}
 AutoReqProv:    no
+Source0:        net-scouter
+Source1:        flow.bpf.o
+Source2:        net-scouter.yaml
+Source3:        net-scouter.service
+Source4:        LICENSE
 
 %description
 Observes directional IPv4/IPv6 TCP and UDP flows on a Linux host and keeps
@@ -24,10 +29,12 @@ install -d %{buildroot}/usr/bin
 install -d %{buildroot}/usr/lib/net-scouter
 install -d %{buildroot}/etc/net-scouter
 install -d %{buildroot}/usr/lib/systemd/system
+install -d %{buildroot}%{_licensedir}/%{name}
 install -m 0755 %{_sourcedir}/net-scouter %{buildroot}/usr/bin/net-scouter
 install -m 0644 %{_sourcedir}/flow.bpf.o %{buildroot}/usr/lib/net-scouter/flow.bpf.o
 install -m 0644 %{_sourcedir}/net-scouter.yaml %{buildroot}/etc/net-scouter/net-scouter.yaml
 install -m 0644 %{_sourcedir}/net-scouter.service %{buildroot}/usr/lib/systemd/system/net-scouter.service
+install -m 0644 %{SOURCE4} %{buildroot}%{_licensedir}/%{name}/LICENSE
 
 %files
 %dir /usr/lib/net-scouter
@@ -36,6 +43,7 @@ install -m 0644 %{_sourcedir}/net-scouter.service %{buildroot}/usr/lib/systemd/s
 /usr/lib/net-scouter/flow.bpf.o
 %config(noreplace) /etc/net-scouter/net-scouter.yaml
 /usr/lib/systemd/system/net-scouter.service
+%license %{_licensedir}/%{name}/LICENSE
 
 %post
 if [ "$1" -eq 1 ]; then

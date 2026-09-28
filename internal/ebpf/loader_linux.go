@@ -17,7 +17,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
-	"github.com/example/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/flow"
 )
 
 const (
