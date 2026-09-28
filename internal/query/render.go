@@ -10,7 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/example/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/flow"
 )
 
 func PrepareFlows(records []flow.Record, connectionsAvailable bool, abi, detail string) FlowsResult {
@@ -52,8 +52,12 @@ func FormatStatus(st Status) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "state:                 %s\n", stateText(st))
 	fmt.Fprintf(&b, "source:                %s\n", empty(st.Source, "none"))
+	if st.Mode != "" {
+		fmt.Fprintf(&b, "mode:                  %s\n", st.Mode)
+	}
+	fmt.Fprintf(&b, "memory evicted:        %d\n", st.MemoryEvictedTotal)
 	if st.Source == "none" {
-		fmt.Fprintf(&b, "durable storage:       %s (%s)\n", empty(st.DurableStorage, DurableUnavailable), empty(st.DurableReason, DurableReason))
+		fmt.Fprintf(&b, "durable storage:       %s\n", durableStorageText(st.DurableStorage, st.DurableReason))
 		fmt.Fprintf(&b, "last error:            %s\n", empty(st.LastError, "(none)"))
 		return b.String()
 	}
@@ -76,7 +80,7 @@ func FormatStatus(st Status) string {
 	}
 	fmt.Fprintf(&b, "map entries:           %d / %d\n", st.Map.Entries, st.Map.MaxEntries)
 	if st.Map.PossibleLoss {
-		fmt.Fprintf(&b, "possible loss:         yes, map is at capacity; new flows can evict existing ones and results may be incomplete\n")
+		fmt.Fprintf(&b, "possible loss:         yes, map at capacity or counter regression may make results incomplete\n")
 	} else {
 		fmt.Fprintf(&b, "possible loss:         no\n")
 	}
@@ -87,7 +91,31 @@ func FormatStatus(st Status) string {
 	}
 	fmt.Fprintf(&b, "exclude destinations:  %s\n", joinOrNone(st.Exclude.Destinations))
 	fmt.Fprintf(&b, "workload CIDRs:        %s\n", joinOrNone(st.Exclude.WorkloadCIDRs))
-	fmt.Fprintf(&b, "durable storage:       %s (%s)\n", empty(st.DurableStorage, DurableUnavailable), empty(st.DurableReason, DurableReason))
+	fmt.Fprintf(&b, "ingress sources:       %s\n", joinOrNone(st.Exclude.Ingress.Sources))
+	fmt.Fprintf(&b, "ingress destinations:  %s\n", joinOrNone(st.Exclude.Ingress.Destinations))
+	fmt.Fprintf(&b, "egress sources:        %s\n", joinOrNone(st.Exclude.Egress.Sources))
+	fmt.Fprintf(&b, "egress destinations:   %s\n", joinOrNone(st.Exclude.Egress.Destinations))
+	fmt.Fprintf(&b, "durable storage:       %s\n", durableStorageText(st.DurableStorage, st.DurableReason))
+	if st.Mode == "persistent" {
+		fmt.Fprintf(&b, "storage path:          %s\n", st.Storage.Path)
+		fmt.Fprintf(&b, "storage schema:        %d\n", st.Storage.Schema)
+		fmt.Fprintf(&b, "last flush:            %s\n", formatTime(st.Storage.LastFlush))
+		fmt.Fprintf(&b, "storage entries:       %d / %d\n", st.Storage.Entries, st.Storage.MaxEntries)
+		fmt.Fprintf(&b, "storage bytes:         %d / %d\n", st.Storage.FileBytes, st.Storage.MaxBytes)
+		if st.Storage.OverMaxBytes {
+			fmt.Fprintf(&b, "storage threshold:     exceeded (maintenance required)\n")
+		}
+		fmt.Fprintf(&b, "retention:             %s\n", st.Storage.Retention)
+		fmt.Fprintf(&b, "expired / evicted:     %d / %d\n", st.Storage.ExpiredTotal, st.Storage.EvictedTotal)
+		if st.Storage.Error != "" {
+			fmt.Fprintf(&b, "storage error:         %s\n", st.Storage.Error)
+		}
+	}
+	if st.Mode == "exporter" {
+		fmt.Fprintf(&b, "metrics listen:        %s\n", empty(st.Exporter.Listen, "(not listening)"))
+		fmt.Fprintf(&b, "published / omitted:   %d / %d\n", st.Exporter.Published, st.Exporter.Omitted)
+		fmt.Fprintf(&b, "last collection:       %s\n", formatTime(st.Exporter.LastCollection))
+	}
 	fmt.Fprintf(&b, "last error:            %s\n", empty(st.LastError, "(none)"))
 	return b.String()
 }
@@ -143,9 +171,10 @@ func FormatFlows(result FlowsResult, format string) (string, error) {
 		var b strings.Builder
 		enc := json.NewEncoder(&b)
 		meta := map[string]any{
-			"type":                 "meta",
-			"connectionsAvailable": result.ConnectionsAvailable,
-			"durableStorage":       result.DurableStorage,
+			"type":                  "meta",
+			"connectionsAvailable":  result.ConnectionsAvailable,
+			"historicalConnections": result.HistoricalConnections,
+			"durableStorage":        result.DurableStorage,
 		}
 		if result.ConnectionABI != "" {
 			meta["connectionABI"] = result.ConnectionABI
@@ -173,7 +202,9 @@ func FormatFlows(result FlowsResult, format string) (string, error) {
 
 func formatTable(result FlowsResult) string {
 	var b strings.Builder
-	if result.ConnectionsAvailable {
+	if result.HistoricalConnections {
+		fmt.Fprintf(&b, "tcp connections: historical counts available (current tracepoint unavailable)\n")
+	} else if result.ConnectionsAvailable {
 		if result.ConnectionABI != "" {
 			fmt.Fprintf(&b, "tcp connections: enabled (trace ABI %s)\n", result.ConnectionABI)
 		} else {
@@ -256,4 +287,21 @@ func empty(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func durableStorageText(state, reason string) string {
+	state = empty(state, DurableUnavailable)
+	if reason == "" {
+		switch state {
+		case DurableReady:
+			return state
+		case DurableDisabled:
+			reason = DurableReason
+		case DurableDegraded:
+			reason = "storage error not specified"
+		default:
+			reason = "reason unavailable"
+		}
+	}
+	return state + " (" + reason + ")"
 }

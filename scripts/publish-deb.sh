@@ -9,7 +9,7 @@ cd "$root"
 
 : "${NEXUS_USER:?set NEXUS_USER}"
 : "${NEXUS_PASS:?set NEXUS_PASS}"
-NEXUS_URL="${NEXUS_URL:-https://nexus.manty.co.kr}"
+: "${NEXUS_URL:?set NEXUS_URL to the package repository base URL}"
 NEXUS_APT_REPO="${NEXUS_APT_REPO:-apt-hosted}"
 NEXUS_APT_DISTRIBUTION="${NEXUS_APT_DISTRIBUTION:-stable}"
 NEXUS_URL=${NEXUS_URL%/}
@@ -24,6 +24,16 @@ deb_file="$root/$DEB_PATH"
 if [[ ! -f "$deb_file" ]]; then
 	echo "missing $deb_file" >&2
 	exit 1
+fi
+checksum_file="$deb_file.sha256"
+if [[ ! -f "$checksum_file" ]]; then
+	echo "missing $checksum_file" >&2
+	exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+	(cd "$(dirname "$deb_file")" && sha256sum --check "$(basename "$checksum_file")")
+else
+	(cd "$(dirname "$deb_file")" && shasum -a 256 --check "$(basename "$checksum_file")")
 fi
 
 name=$(basename "$deb_file")

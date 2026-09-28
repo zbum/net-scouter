@@ -1,6 +1,8 @@
 interfaces:
   - eth0
 
+mode: exporter  # Change to persistent to retain flows across restarts.
+
 # Results include flows whose local endpoint uses an address assigned to these
 # interfaces at agent startup. Restart the agent after changing NIC addresses.
 
@@ -19,12 +21,33 @@ aggregation:
   interval: 30s
   maxFlows: 65536
 
-export:
-  type: stdout
+exporter:
+  listen: 127.0.0.1:9469
+  maxFlows: 4096
+
+# Used only in persistent mode. The database is owner-readable only.
+storage:
+  path: /var/lib/net-scouter/flows.db
+  flushInterval: 5m
+  retention: 720h
+  maxEntries: 65536
+  maxBytes: 67108864
+
+# Deprecated: explicitly set export.type=stdout to also write changed rows
+# to standard output. Omit it to avoid duplicate periodic output.
 
 exclude:
+  # Existing global destination rule applies in both directions.
   destinations: []
+  # Exclude only when both endpoints are in these CIDRs.
   workloadCIDRs: []
+  # Each matching source or destination rule excludes that direction's row.
+  ingress:
+    sources: []
+    destinations: []
+  egress:
+    sources: []
+    destinations: []
 
 safety:
   failOpen: true

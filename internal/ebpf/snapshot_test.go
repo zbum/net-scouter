@@ -13,7 +13,7 @@ func TestDecodeRecordConvertsIPv4AndMonotonicTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.SrcIP.String() != "10.0.0.1" || !r.FirstSeen.Equal(time.Unix(91, 0)) || r.Connections != 2 {
+	if r.SrcIP.String() != "10.0.0.1" || !r.FirstSeen.Equal(time.Unix(91, 0)) || r.Connections != 2 || r.EpochNS != uint64(time.Second) {
 		t.Fatalf("record: %+v", r)
 	}
 }

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/net-scouter/internal/flow"
-	"github.com/example/net-scouter/internal/query"
+	"github.com/zbum/net-scouter/internal/flow"
+	"github.com/zbum/net-scouter/internal/query"
 )
 
 func TestResolveHostAddressesSelectsEnabledFamiliesAndEveryInterface(t *testing.T) {

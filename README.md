@@ -5,7 +5,7 @@
 - 2026-09-28 — `bugfix/bpf-verifier-pointer-bounds`: IPv4/IPv6 파서의 가변 패킷 포인터 연산을 `bpf_skb_load_bytes`와 길이 검사로 교체하여 커널 verifier의 프로그램 로드 거부를 수정했습니다. 로드 실패 시 verifier 로그 전체를 출력합니다. Go 테스트, 파서 회귀 테스트, 플랫폼별 빌드와 Ubuntu 6.8 커널 실행을 검증했고 사용자 Ubuntu 서버에서도 정상 실행을 확인했습니다.
 
 
-현재 릴리스는 0.1.5입니다.
+현재 릴리스는 0.1.6입니다.
 
 서버를 교체하거나 IP를 바꾸기 전에, 그 서버가 실제로 누구와 어떤 포트로 통신하는지 보는 도구입니다. 방화벽이나 ACL을 고칠 때 필요한 통신 관계를 트래픽에서 찾습니다.
 
@@ -31,23 +31,23 @@
 
 ## 샘플
 
-아래는 `enp2s0`의 주소가 `192.168.31.102`인 서버에서 `sudo net-scouter flows`를 실행했을 때의 형태입니다. 숫자는 읽기 위한 예시입니다.
+아래는 문서용 주소 대역을 사용한 예시입니다. 실제 시스템이나 캡처에서 가져온 값이 아닙니다.
 
 ```text
 tcp connections: enabled (trace ABI 5.15)
-durable storage: unavailable
+durable storage: disabled
 SRC                DST                PROTO  DIR      PORT  FIRST SEEN                 LAST SEEN                  PACKETS  BYTES  CONNECTIONS
-192.168.31.1       192.168.31.102     TCP    ingress  22    2026-09-24T00:06:35+09:00  2026-09-24T00:07:23+09:00  98       8372   1
-106.75.153.103     192.168.31.102     TCP    ingress  22    2026-09-23T23:40:03+09:00  2026-09-23T23:40:03+09:00  5        1336   1
-192.168.31.6       192.168.31.102     TCP    ingress  9091  2026-09-23T23:39:26+09:00  2026-09-23T23:39:26+09:00  6        624    1
-192.168.31.102     34.120.177.193     TCP    egress   443   2026-09-23T23:37:36+09:00  2026-09-23T23:39:07+09:00  10       668    1
+192.0.2.10         198.51.100.20      TCP    ingress  22    2025-01-02T03:04:05Z       2025-01-02T03:05:10Z       98       8372   1
+203.0.113.30       198.51.100.20      TCP    ingress  22    2025-01-02T03:04:15Z       2025-01-02T03:04:15Z       5        1336   1
+192.0.2.40         198.51.100.20      TCP    ingress  9091  2025-01-02T03:04:25Z       2025-01-02T03:04:25Z       6        624    1
+198.51.100.20      203.0.113.50       TCP    egress   443   2025-01-02T03:03:30Z       2025-01-02T03:04:50Z       10       668    1
 ```
 
 이 샘플을 ACL로 읽으면 다음과 같습니다.
 
-- `192.168.31.1`과 `106.75.153.103`은 이 서버의 TCP 22번으로 들어옵니다.
-- `192.168.31.6`은 이 서버의 TCP 9091번으로 들어옵니다.
-- 이 서버는 `34.120.177.193`의 TCP 443번으로 나갑니다.
+- `192.0.2.10`과 `203.0.113.30`은 이 서버의 TCP 22번으로 들어옵니다.
+- `192.0.2.40`은 이 서버의 TCP 9091번으로 들어옵니다.
+- 이 서버는 `203.0.113.50`의 TCP 443번으로 나갑니다.
 - UDP는 기본 화면에 없습니다. `sudo net-scouter flows --protocol udp` 또는 `--protocol both`로 봅니다.
 
 ## 자주 쓰는 조회
@@ -70,4 +70,36 @@ sudo net-scouter flows --protocol tcp --attempts
 sudo net-scouter flows --local
 ```
 
-집계는 커널 메모리에만 있습니다. 서비스를 재시작하면 그때까지 모은 행은 사라집니다.
+기본 `mode: exporter`는 메모리 집계를 `127.0.0.1:9469/metrics`에 Prometheus 형식으로 제공합니다. 새 설정에서 표준출력 JSONL은 기본으로 내보내지 않습니다. 서비스를 재시작하면 이 모드의 기록은 사라집니다.
+
+재시작 후에도 기록이 필요하면 `mode: persistent`로 바꾸십시오. 이 모드는 HTTP 포트를 열지 않고 `/var/lib/net-scouter/flows.db`에 bbolt 데이터를 5분마다 저장합니다. 정상 종료 시 마지막으로 다시 수집해 저장하며, 비정상 종료 시 마지막 성공 저장 이후의 기록은 잃을 수 있습니다. 기본 보존 기간은 마지막 관찰 후 720시간, 최대 항목은 65536개입니다. `maxBytes`는 디스크 사용 경고 기준이며 파일 크기를 강제로 제한하지 않습니다. 서비스가 멈춘 상태에서도 `sudo net-scouter flows`가 저장된 기록을 읽습니다.
+
+```yaml
+mode: persistent
+storage:
+  path: /var/lib/net-scouter/flows.db
+  flushInterval: 5m
+  retention: 720h
+  maxEntries: 65536
+  maxBytes: 67108864
+```
+
+기존 `export: {type: stdout}` 설정은 계속 받아들이며, 이를 명시한 경우에만 변경된 누적 행을 JSONL로 추가 출력합니다. `sudo net-scouter status`는 현재 모드와 저장 또는 exporter 상태를 보여 줍니다.
+
+## 결과에서 CIDR 제외
+
+`exclude.ingress.sources`는 서버에 들어오는 연결의 상대 IP를, `exclude.egress.destinations`는 서버가 접속하는 상대 IP를 기준으로 거릅니다. 필요하면 각 방향의 `sources`와 `destinations`를 모두 지정할 수 있습니다. 지정한 목록 중 하나라도 일치하면 그 행은 조회·metrics·저장·선택적 표준출력에서 빠집니다. IPv4와 IPv6 CIDR을 사용할 수 있습니다.
+
+```yaml
+exclude:
+  destinations: []
+  workloadCIDRs: []
+  ingress:
+    sources: [192.0.2.0/24]
+    destinations: []
+  egress:
+    sources: []
+    destinations: [2001:db8:1::/48]
+```
+
+기존 `exclude.destinations`는 방향과 관계없이 목적지에 적용되고, `workloadCIDRs`는 양쪽 주소가 모두 해당 CIDR에 들어올 때만 제외합니다. 설정을 바꾸면 에이전트를 재시작하십시오. `net-scouter status`에서 적용된 목록을 확인할 수 있습니다.
