@@ -63,7 +63,7 @@ RPM은 `https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/`에 게시�
 바이너리와 `/usr/lib/net-scouter/flow.bpf.o`를 함께 교체해야 BPF 수정이 적용됩니다. `make build-all`은 deb 패키지를 갱신하지 않습니다. 같은 릴리스의 수정 패키지는 `DEB_REVISION=2 make deb`처럼 revision을 지정해 새로 빌드하십시오. 실제 버전과 파일 경로는 `dist/deb/latest.env`에서 확인합니다.
 
 ```bash
-sudo apt install ./net-scouter_0.1.6-1_amd64.deb
+sudo apt install ./net-scouter_0.1.7-1_amd64.deb
 sudo systemctl restart net-scouter
 sudo net-scouter status
 sudo journalctl -u net-scouter -n 100 --no-pager
@@ -185,7 +185,7 @@ sudo net-scouter flows --help
 
 ## 패키지를 만들 때
 
-릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.6`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
+릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.7`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
 
 BPF 컴파일은 로컬 이미지 `net-scouter-deb-build:22.04`와 `net-scouter-rpm-build:8`을 사용합니다. 없으면 한 번 만들고, 이후에는 다시 받지 않습니다. Dockerfile을 바꾸면 `make package-images`로 다시 만듭니다.
 
