@@ -7,6 +7,7 @@ loader=scripts/verify-bpf-load.sh
 
 grep -q "name: 'RUN_KERNEL_VERIFIERS', defaultValue: false" "$jenkinsfile"
 grep -q "NEXUS_CREDENTIALS_ID = 'nexus-credentials'" "$jenkinsfile"
+grep -Fq "NEXUS_URL = 'https://nexus.manty.co.kr'" "$jenkinsfile"
 grep -q "agent { label 'linux && amd64 && ubuntu-build' }" "$jenkinsfile"
 grep -q "agent { label 'linux && amd64 && rocky-build' }" "$jenkinsfile"
 grep -q "sh 'make deb'" "$jenkinsfile"

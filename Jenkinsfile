@@ -6,6 +6,7 @@ pipeline {
     }
 
     environment {
+        NEXUS_URL = 'https://nexus.manty.co.kr'
         NEXUS_CREDENTIALS_ID = 'nexus-credentials'
     }
 
