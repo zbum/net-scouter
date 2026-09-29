@@ -2,6 +2,17 @@
 
 이 문서는 `net-scouter`의 사용자 관점 변경 사항을 기록한다.
 
+## [0.1.7] - 2026-09-29
+
+### Added
+
+- `flows -k`/`-m`/`-h`로 바이트를 KiB/MiB/자동 단위로 표시할 수 있다. 도움말은 `flows --help`로 확인한다.
+- `flows --sort-by=packets|bytes|connections`로 원래 숫자 기준 내림차순 정렬을 지원한다. 대소문자와 단수·복수형, 약어 `p`/`b`/`c`를 모두 허용한다.
+
+### Changed
+
+- BPF helper ID, 맵 상수, `__sk_buff`와 정수 타입을 Linux UAPI 헤더에서 가져오도록 변경했다. Linux BPF 빌드·검사에는 배포판의 UAPI 헤더 패키지가 필요하며, macOS BPF 검사는 Docker에서 실행한다.
+
 ## [0.1.6] - 2026-09-28
 
 ### Added

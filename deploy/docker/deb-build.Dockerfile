@@ -3,5 +3,5 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends clang make \
+	&& apt-get install -y --no-install-recommends clang make linux-libc-dev \
 	&& rm -rf /var/lib/apt/lists/*

@@ -63,7 +63,7 @@ RPM은 `https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/`에 게시�
 바이너리와 `/usr/lib/net-scouter/flow.bpf.o`를 함께 교체해야 BPF 수정이 적용됩니다. `make build-all`은 deb 패키지를 갱신하지 않습니다. 같은 릴리스의 수정 패키지는 `DEB_REVISION=2 make deb`처럼 revision을 지정해 새로 빌드하십시오. 실제 버전과 파일 경로는 `dist/deb/latest.env`에서 확인합니다.
 
 ```bash
-sudo apt install ./net-scouter_0.1.6-1_amd64.deb
+sudo apt install ./net-scouter_0.1.7-1_amd64.deb
 sudo systemctl restart net-scouter
 sudo net-scouter status
 sudo journalctl -u net-scouter -n 100 --no-pager
@@ -144,6 +144,12 @@ sudo net-scouter flows --attempts
 sudo net-scouter flows --local
 sudo net-scouter flows --format json
 sudo net-scouter flows --format jsonl
+sudo net-scouter flows -k
+sudo net-scouter flows -m --sort-by=bytes
+sudo net-scouter flows -h --sort-by=PACKET
+sudo net-scouter flows --sort-by=CONNECTION
+sudo net-scouter flows -h --sort-by=b
+sudo net-scouter flows --help
 ```
 
 | 옵션 | 기본값 | 의미 |
@@ -152,7 +158,16 @@ sudo net-scouter flows --format jsonl
 | `--attempts` | 끄기 | 현재 수집 원본에서 성립하지 않은 TCP 시도도 표시. 영속/metrics 집계에는 성립한 TCP와 UDP만 포함 |
 | `--local` | 끄기 | 루프백, 출발지와 도착지가 같은 흐름, 설정한 NIC 주소끼리의 흐름도 표시 |
 | `--format` | `table` | `table`, `json`, `jsonl` |
+| `-k` | 끄기 | 표의 BYTES를 KiB(1024바이트)로 표시 |
+| `-m` | 끄기 | 표의 BYTES를 MiB(1024²바이트)로 표시 |
+| `-h` | 끄기 | 표의 BYTES를 B/KiB/MiB/GiB/TiB/PiB/EiB 중 자동 단위로 표시 |
+| `--sort-by` | 기존 조회 순서 | `packets`(`p`), `bytes`(`b`), `connections`(`c`) 중 하나를 기준으로 내림차순 정렬 |
+| `--help` | — | 도움말 표시 (`-h`는 용량 자동 표시) |
 | `--config` | `/etc/net-scouter/net-scouter.yaml` | NIC 주소와 오프라인 DB 경로·제외 규칙을 읽을 설정 파일 |
+
+`-k`, `-m`, `-h`는 동시에 사용할 수 없습니다. KiB 이상은 소수점 둘째 자리까지 표시하며, 옵션을 생략하면 기존처럼 정수 바이트를 표시합니다. PACKETS와 CONNECTIONS는 개수 그대로 표시합니다. JSON/JSONL의 `bytes`는 이 옵션과 관계없이 원래 정수 바이트 값을 유지합니다.
+
+`--sort-by`는 대소문자와 단수·복수형, 약어 `p`/`b`/`c`를 모두 허용합니다. 예를 들어 `--sort-by=BYTE`, `--sort-by=bytes`, `--sort-by=b`, `--sort-by=B`는 같습니다. 모든 출력 형식에서 표시 단위로 반올림하기 전의 원래 숫자로 정렬하며, 같은 값은 기존 순서를 유지합니다. 연결 수 정렬에서는 UDP의 `-`와 수집 불가의 `n/a`를 마지막에 배치합니다. 정렬 옵션을 생략하면 기존의 최근 관찰 순서를 유지합니다. 이 옵션들은 실행 중인 에이전트 조회와 영속 DB의 오프라인 조회에 모두 적용됩니다.
 
 에이전트는 선택한 NIC의 IP를 시작할 때 읽습니다. 주소가 없거나 조회에 실패하면 수집을 시작하지 않으므로, IP 변경 후에는 서비스를 재시작하십시오. `status`에서 적용된 `host addresses`를 확인할 수 있습니다. TCP 연결 집계를 쓸 수 없으면 연결 수는 `0`이 아니라 `n/a` 또는 JSON `null`이며, 기본 조회에서는 성공 여부를 확인할 수 없는 TCP를 숨깁니다. 에이전트를 띄우기 전에 이미 연결되어 있던 TCP는 연결 수가 0이라 기본 화면에는 없고, `--attempts`로 볼 수 있습니다.
 
@@ -170,7 +185,7 @@ sudo net-scouter flows --format jsonl
 
 ## 패키지를 만들 때
 
-릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.6`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
+릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.7`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
 
 BPF 컴파일은 로컬 이미지 `net-scouter-deb-build:22.04`와 `net-scouter-rpm-build:8`을 사용합니다. 없으면 한 번 만들고, 이후에는 다시 받지 않습니다. Dockerfile을 바꾸면 `make package-images`로 다시 만듭니다.
 

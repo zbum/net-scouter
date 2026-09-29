@@ -170,10 +170,12 @@ bpf/flow.bpf.c
 dist/flow.bpf.o + dist/net-scouter-linux-$GOARCH
 ```
 
-BPF 타깃이 있는 clang이 호스트에 있으면 `make build-bpf`로 충분하다. Apple clang에는 BPF 타깃이 없으므로 패키지 빌드는 다음 이미지를 쓴다.
+BPF 타깃이 있는 clang과 Linux UAPI 헤더가 설치된 Linux 호스트에서는 `make build-bpf`로 빌드한다. Ubuntu는 `linux-libc-dev`, Rocky Linux는 `kernel-headers` 패키지가 필요하다. BPF helper ID, 맵 상수, `__sk_buff`는 `<linux/bpf.h>`, 정수 타입은 `<linux/types.h>`의 공식 정의를 사용한다. libbpf 개발 패키지는 필요하지 않다. Ubuntu의 multiarch 헤더 경로는 Makefile에서 추가하며, 별도 sysroot를 사용하면 `BPF_CPPFLAGS`로 재정의한다.
 
-- `net-scouter-deb-build:22.04`: Ubuntu 22.04, clang, make
-- `net-scouter-rpm-build:8`: Rocky Linux 8, clang, make, rpm-build
+Apple clang에는 BPF 타깃이 없으므로 macOS의 BPF 빌드와 검사는 다음 Linux 이미지를 쓴다.
+
+- `net-scouter-deb-build:22.04`: Ubuntu 22.04, clang, make, linux-libc-dev
+- `net-scouter-rpm-build:8`: Rocky Linux 8, clang, make, rpm-build, kernel-headers
 
 ```bash
 make package-images
@@ -182,7 +184,7 @@ make deb
 make rpm
 ```
 
-이미지가 없으면 `publish-deb`, `publish-rpm`, `build-bpf-image`가 한 번 만든다. 이후 빌드는 이미지 안에서 BPF만 컴파일한다. 컨테이너는 현재 uid로 실행해서 산출물이 root 소유가 되지 않는다.
+이미지가 없으면 패키징 스크립트와 macOS BPF 검사가 자동으로 만든다. `make build-bpf-image`는 이미지 빌드 후 BPF를 컴파일한다. Dockerfile 변경 후 기존 이미지는 `make package-images`로 갱신한다. 컨테이너는 현재 uid로 실행해서 산출물이 root 소유가 되지 않는다. macOS의 `make test`는 BPF 문법·주소 검사만 Ubuntu 컨테이너에서 실행하므로 Docker가 필요하고, Go 테스트는 호스트에서 실행한다.
 
 Go 바이너리는 `CGO_ENABLED=0`으로 빌드 머신의 libc에 묶이지 않는다. BPF 오브젝트는 배포판용이 아니다. 커널이 받아들이는지는 지원 커널에서 따로 본다.
 
@@ -191,6 +193,8 @@ IPv4/IPv6 파서는 IP 헤더가 선언한 길이와 skb 경계를 넘지 않는
 ## CI
 
 Jenkinsfile은 `linux && amd64 && ubuntu-build` 노드와 `linux && amd64 && rocky-build` 노드에서 두 빌드를 병렬로 실행한다. 두 노드 모두 Git, Go 1.26 이상, Make, Docker, `file`, Clang이 필요하며, 빌드 시작 즉시 도구, Go 버전과 Docker daemon을 점검한다. Go 바이너리는 호스트 Jenkins 노드에서 빌드하고 패키지 Docker 이미지는 BPF와 배포 패키지 생성에 사용하므로, 두 Jenkins 노드 자체에 Go 1.26 이상을 설치해야 한다.
+
+호스트에서 실행하는 BPF 검사에도 Linux UAPI 헤더가 필요하므로 Ubuntu Jenkins 노드에는 `linux-libc-dev`, Rocky 노드에는 `kernel-headers`를 설치한다.
 
 `release/<version>` 브랜치는 루트 `VERSION`과 버전이 같아야 한다. Jenkins는 다르면 빌드를 중단하고, 같으면 빌드 표시명을 `#<build> v<version>`으로 설정한다.
 
