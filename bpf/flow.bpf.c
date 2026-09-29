@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "flow.h"
+#include <linux/bpf.h>
 
 #ifdef NET_SCOUTER_BPF_HOST_TEST
 #define SEC(name) __attribute__((used))
 #else
 #define SEC(name) __attribute__((section(name), used))
 #endif
+#ifdef __always_inline
+#undef __always_inline
+#endif
 #define __always_inline inline __attribute__((always_inline))
 #define TC_ACT_OK 0
-#define BPF_MAP_TYPE_LRU_HASH 9
-#define BPF_MAP_TYPE_ARRAY 2
-#define BPF_MAP_TYPE_HASH 1
-#define BPF_NOEXIST 1
 #define ETH_P_IP 0x0800
 #define ETH_P_IPV6 0x86dd
 #define ETH_P_8021Q 0x8100
@@ -27,26 +27,6 @@
 #define TCP_SYN_SENT 2
 #define TCP_SYN_RECV 3
 #define TCP_NEW_SYN_RECV 12
-
-struct __sk_buff {
-    __u32 len;
-    __u32 pkt_type;
-    __u32 mark;
-    __u32 queue_mapping;
-    __u32 protocol;
-    __u32 vlan_present;
-    __u32 vlan_tci;
-    __u32 vlan_proto;
-    __u32 priority;
-    __u32 ingress_ifindex;
-    __u32 ifindex;
-    __u32 tc_index;
-    __u32 cb[5];
-    __u32 hash;
-    __u32 tc_classid;
-    __u32 data;
-    __u32 data_end;
-};
 
 struct bpf_map_def {
     __u32 type;
@@ -193,12 +173,15 @@ struct bpf_map_def SEC("maps") host_addrs = {
     .max_entries = 256,
 };
 
-static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *)1;
+static void *(*bpf_map_lookup_elem)(void *map, const void *key) =
+    (void *)BPF_FUNC_map_lookup_elem;
 static long (*bpf_map_update_elem)(void *map, const void *key,
-                                   const void *value, __u64 flags) = (void *)2;
-static __u64 (*bpf_ktime_get_ns)(void) = (void *)5;
+                                   const void *value, __u64 flags) =
+    (void *)BPF_FUNC_map_update_elem;
+static __u64 (*bpf_ktime_get_ns)(void) = (void *)BPF_FUNC_ktime_get_ns;
 static long (*bpf_skb_load_bytes)(const struct __sk_buff *skb, __u32 offset,
-                                  void *to, __u32 length) = (void *)26;
+                                  void *to, __u32 length) =
+    (void *)BPF_FUNC_skb_load_bytes;
 
 static __always_inline __u16 ntohs(__u16 value)
 {
