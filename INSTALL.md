@@ -1,5 +1,63 @@
 # 설치와 사용
 
+Rocky Linux 8.10 / RHEL 8 계열과 Ubuntu 22.04 이상을 대상으로 합니다. 배포판 버전보다 커널의 eBPF, BTF, TC 기능이 중요합니다. 패키지는 서비스를 자동으로 시작하지 않습니다.
+
+## Nexus 저장소에서 설치 (우선 권장)
+
+패키지 서버는 `https://nexus.manty.co.kr`입니다. 아래 안내는 소스와 APT 공개키를 `https://github.com/zubm/net-scouter`의 `main` 브랜치에 배포하고, Nexus 저장소를 읽을 수 있는 환경을 기준으로 합니다.
+
+### Ubuntu: APT 저장소 등록과 설치
+
+APT 메타데이터 서명 확인에는 저장소의 [`deploy/apt/public.gpg.key`](deploy/apt/public.gpg.key)를 사용합니다. 키를 다운로드한 뒤 전용 keyring으로 변환하고, `signed-by`로 이 저장소에만 적용합니다.
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl gnupg
+curl --fail --silent --show-error --location \
+  https://raw.githubusercontent.com/zubm/net-scouter/main/deploy/apt/public.gpg.key \
+  --output /tmp/net-scouter-public.gpg.key
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo gpg --batch --yes --dearmor \
+  --output /etc/apt/keyrings/net-scouter.gpg /tmp/net-scouter-public.gpg.key
+sudo chmod 0644 /etc/apt/keyrings/net-scouter.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/net-scouter.gpg] https://nexus.manty.co.kr/repository/apt-hosted/ stable main' \
+  | sudo tee /etc/apt/sources.list.d/net-scouter.list
+sudo apt update
+sudo apt install net-scouter
+```
+
+소스를 이미 내려받았다면 프로젝트 루트에서 다음 명령으로 같은 키를 등록할 수 있습니다. 이후 위의 저장소 등록(`echo 'deb ...'`)부터 진행합니다.
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo gpg --batch --yes --dearmor \
+  --output /etc/apt/keyrings/net-scouter.gpg deploy/apt/public.gpg.key
+sudo chmod 0644 /etc/apt/keyrings/net-scouter.gpg
+```
+
+Distribution은 `stable`, Component는 `main`입니다. Ubuntu 코드명(`jammy`, `noble` 등)으로 바꾸지 마십시오. 공개키는 Nexus `apt-hosted`에 설정한 서명키와 대응해야 합니다.
+
+설치 후 아래 [설정](#설정)에 따라 `/etc/net-scouter/net-scouter.yaml`의 인터페이스를 수정한 뒤 실행합니다.
+
+```bash
+sudo net-scouter check
+sudo systemctl enable --now net-scouter
+sudo net-scouter status
+sudo journalctl -u net-scouter -n 100 --no-pager
+```
+
+업데이트할 때는 다음 명령을 사용합니다.
+
+```bash
+sudo apt update
+sudo apt install --only-upgrade net-scouter
+sudo systemctl restart net-scouter
+```
+
+### Rocky Linux / RHEL: RPM 배포 경로
+
+RPM은 `https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/`에 게시됩니다. 현재 RPM은 서명하지 않으며, 게시 스크립트는 `.sha256` 파일을 Nexus에 업로드하지 않습니다. RPM과 빌드 시 생성한 같은 이름의 `.sha256` 파일을 신뢰할 수 있는 릴리스 채널에서 함께 확보한 뒤 아래 [배포 패키지](#배포-패키지) 절차로 설치하십시오. APT용 `deploy/apt/public.gpg.key`는 RPM 서명키로 사용하지 않습니다.
+
 ## 수정 빌드 적용 및 로그 확인
 
 바이너리와 `/usr/lib/net-scouter/flow.bpf.o`를 함께 교체해야 BPF 수정이 적용됩니다. `make build-all`은 deb 패키지를 갱신하지 않습니다. 같은 릴리스의 수정 패키지는 `DEB_REVISION=2 make deb`처럼 revision을 지정해 새로 빌드하십시오. 실제 버전과 파일 경로는 `dist/deb/latest.env`에서 확인합니다.
@@ -13,11 +71,9 @@ sudo journalctl -u net-scouter -n 100 --no-pager
 
 파일명은 생성된 패키지에 맞춰 바꾸십시오. 같은 버전을 재설치할 때는 `apt install --reinstall`을 사용합니다. 서비스가 이전 직접 설치본을 실행하는지 확인하려면 `systemctl show net-scouter -p ExecStart -p FragmentPath`를 실행합니다. deb의 실행 파일은 `/usr/bin/net-scouter`입니다. BPF verifier 오류가 나면 수정된 바이너리가 출력하는 전체 로그와 `uname -r` 결과를 함께 확인하십시오.
 
-Rocky Linux 8.10 / RHEL 8 계열과 Ubuntu 22.04 이상을 대상으로 합니다. 배포판 버전보다 커널의 eBPF, BTF, TC 기능이 중요합니다. 패키지는 서비스를 자동으로 시작하지 않습니다.
-
 ## 배포 패키지
 
-빌드 결과의 deb 또는 RPM과 같은 이름의 `.sha256` 파일을 신뢰할 수 있는 릴리스 채널에서 함께 받아 checksum을 확인한 뒤 설치하십시오. 저장소에는 특정 조직의 내부 패키지 서버 주소나 자격증명이 포함되지 않습니다.
+패키지를 파일로 직접 설치할 때는 빌드 결과의 deb 또는 RPM과 같은 이름의 `.sha256` 파일을 신뢰할 수 있는 릴리스 채널에서 함께 받아 checksum을 확인한 뒤 설치하십시오.
 
 ```bash
 sha256sum --check net-scouter_*.deb.sha256
@@ -120,6 +176,7 @@ BPF 컴파일은 로컬 이미지 `net-scouter-deb-build:22.04`와 `net-scouter-
 
 ```bash
 make package-images
+export NEXUS_URL=https://nexus.manty.co.kr
 NEXUS_USER=... NEXUS_PASS=... make publish-deb
 NEXUS_USER=... NEXUS_PASS=... make publish-rpm
 ```
