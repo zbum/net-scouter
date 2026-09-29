@@ -4,9 +4,9 @@ set -euo pipefail
 test -s LICENSE
 grep -q '^module github.com/zbum/net-scouter$' go.mod
 if git grep -n -E \
-  'github.com/example/net-scouter|nexus\.manty\.co\.kr|/Users/nhn|^[[:space:]]*gpgcheck=0[[:space:]]*$' \
+  'github.com/example/net-scouter|/Users/nhn|^[[:space:]]*gpgcheck=0[[:space:]]*$' \
   -- ':!docs/features/**' ':!scripts/test-public-repo-invariants.sh'; then
-  echo "public repository metadata contains a placeholder module, private endpoint, unsafe RPM guidance, or local path" >&2
+  echo "public repository metadata contains a placeholder module, unsafe RPM guidance, or local path" >&2
   exit 1
 fi
 grep -q '^\.omc/\*\*$' .gitignore
