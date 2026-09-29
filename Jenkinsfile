@@ -6,7 +6,7 @@ pipeline {
     }
 
     environment {
-        NEXUS_CREDENTIALS_ID = 'net-scouter-package-publisher'
+        NEXUS_CREDENTIALS_ID = 'nexus-credentials'
     }
 
     options {
