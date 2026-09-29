@@ -1,10 +1,7 @@
 #ifndef __NET_SCOUTER_FLOW_H
 #define __NET_SCOUTER_FLOW_H
 
-typedef unsigned char __u8;
-typedef unsigned short __u16;
-typedef unsigned int __u32;
-typedef unsigned long long __u64;
+#include <linux/types.h>
 
 #define FLOW_INGRESS 1
 #define FLOW_EGRESS  2

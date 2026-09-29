@@ -57,7 +57,7 @@ func configuredNICAddrs(path string) []netip.Addr {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: net-scouter <check|run --config PATH|status [--format text|json]|flows [--protocol tcp|udp|both] [--attempts] [--local] [--config PATH] [--format table|json|jsonl]>")
+	fmt.Fprintln(os.Stderr, "usage: net-scouter <check|run --config PATH|status [--format text|json]|flows [--protocol tcp|udp|both] [--attempts] [--local] [-k|-m|-h] [--sort-by packets|bytes|connections] [--config PATH] [--format table|json|jsonl] [--help]>")
 }
 
 func run(args []string) (runErr error) {
@@ -195,6 +195,10 @@ func flowsCmd(args []string) error {
 	fs.SetOutput(os.Stderr)
 	format := fs.String("format", "table", "table, json, or jsonl")
 	protocol := fs.String("protocol", "tcp", "tcp, udp, or both")
+	kilobytes := fs.Bool("k", false, "display table bytes in KiB (1024 bytes)")
+	megabytes := fs.Bool("m", false, "display table bytes in MiB (1048576 bytes)")
+	human := fs.Bool("h", false, "display table bytes with automatic units; use --help for help")
+	sortBy := fs.String("sort-by", "", "sort descending by packets (p), bytes (b), or connections (c)")
 	attempts := fs.Bool("attempts", false, "include TCP connection attempts that did not establish")
 	includeLocal := fs.Bool("local", false, "include loopback and flows that stay on the configured NIC addresses")
 	configPath := fs.String("config", "/etc/net-scouter/net-scouter.yaml", "config used to resolve NIC addresses")
@@ -207,6 +211,21 @@ func flowsCmd(args []string) error {
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments")
+	}
+	options := query.FlowDisplayOptions{SortBy: *sortBy}
+	for _, unit := range []struct {
+		enabled bool
+		name    string
+	}{{*kilobytes, "k"}, {*megabytes, "m"}, {*human, "h"}} {
+		if unit.enabled {
+			if options.ByteUnit != "" {
+				return fmt.Errorf("-k, -m, and -h are mutually exclusive")
+			}
+			options.ByteUnit = unit.name
+		}
+	}
+	if err := options.Validate(); err != nil {
+		return err
 	}
 	load := query.LoadFlows
 	if *attempts {
@@ -231,7 +250,7 @@ func flowsCmd(args []string) error {
 	}
 	result = query.FilterEstablished(result, *attempts)
 	result = query.FilterLocal(result, *includeLocal, configuredNICAddrs(*configPath))
-	text, err := query.FormatFlows(result, *format)
+	text, err := query.FormatFlowsWithOptions(result, *format, options)
 	if err != nil {
 		return err
 	}

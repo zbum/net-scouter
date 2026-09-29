@@ -158,9 +158,17 @@ func FilterEstablished(result FlowsResult, includeAttempts bool) FlowsResult {
 }
 
 func FormatFlows(result FlowsResult, format string) (string, error) {
+	return FormatFlowsWithOptions(result, format, FlowDisplayOptions{})
+}
+
+func FormatFlowsWithOptions(result FlowsResult, format string, options FlowDisplayOptions) (string, error) {
+	if err := options.Validate(); err != nil {
+		return "", err
+	}
+	result = sortFlows(result, options.SortBy)
 	switch format {
 	case "table", "":
-		return formatTable(result), nil
+		return formatTable(result, options.ByteUnit), nil
 	case "json":
 		body, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
@@ -200,7 +208,7 @@ func FormatFlows(result FlowsResult, format string) (string, error) {
 	}
 }
 
-func formatTable(result FlowsResult) string {
+func formatTable(result FlowsResult, byteUnit string) string {
 	var b strings.Builder
 	if result.HistoricalConnections {
 		fmt.Fprintf(&b, "tcp connections: historical counts available (current tracepoint unavailable)\n")
@@ -217,7 +225,7 @@ func formatTable(result FlowsResult) string {
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "SRC\tDST\tPROTO\tDIR\tPORT\tFIRST SEEN\tLAST SEEN\tPACKETS\tBYTES\tCONNECTIONS")
 	for _, record := range result.Records {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%d\t%d\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%d\t%s\t%s\n",
 			record.SrcIP,
 			record.DstIP,
 			protocolName(record.Protocol),
@@ -226,7 +234,7 @@ func formatTable(result FlowsResult) string {
 			record.FirstSeen.Format(time.RFC3339),
 			record.LastSeen.Format(time.RFC3339),
 			record.Packets,
-			record.Bytes,
+			formatBytes(record.Bytes, byteUnit),
 			connectionCell(record),
 		)
 	}

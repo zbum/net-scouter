@@ -53,6 +53,7 @@ SRC                DST                PROTO  DIR      PORT  FIRST SEEN          
 sudo net-scouter flows
 sudo net-scouter flows --protocol udp
 sudo net-scouter flows --protocol both
+sudo net-scouter flows -h --sort-by=bytes
 sudo net-scouter status
 ```
 
