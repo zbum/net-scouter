@@ -2,6 +2,16 @@
 
 이 문서는 `net-scouter`의 사용자 관점 변경 사항을 기록한다.
 
+## [Unreleased]
+
+### Fixed
+
+- 명시적 레거시 stdout flow export가 systemd와 rsyslog를 통해 `/var/log/syslog`를 무제한 키울 수 있는 문제를 방지했다. 서비스 stdout은 폐기하고 stderr journal에는 rate limit을 적용한다.
+
+### Operational Notes
+
+- 기존 설정에 `export.type: stdout`이 남아 있다면 제거하고 서비스를 재시작한다. 기존 대용량 syslog는 원인 제거와 필요한 로그 보존 후에 회수한다.
+
 ## [0.1.7] - 2026-09-29
 
 ### Added

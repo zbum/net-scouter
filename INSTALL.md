@@ -129,6 +129,26 @@ sudo systemctl status net-scouter --no-pager
 sudo net-scouter run --config /etc/net-scouter/net-scouter.yaml
 ```
 
+### syslog가 빠르게 커지는 경우
+
+이전 설정의 `export.type: stdout`이 남아 있으면 변경된 flow JSONL이 집계 주기마다 systemd로 출력됩니다. 신규 서비스 유닛은 stdout을 폐기하고 stderr만 rate limit을 적용해 journal에 남깁니다. 기존 서버에서는 `/etc/net-scouter/net-scouter.yaml`의 다음 레거시 블록을 제거하십시오.
+
+```yaml
+export:
+  type: stdout
+```
+
+패키지 업데이트 후 유닛과 서비스를 다시 읽고, 설정과 로그 증가가 멈춼는지 확인합니다.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart net-scouter
+sudo journalctl -u net-scouter -n 100 --no-pager
+sudo du -h /var/log/syslog /var/log/syslog.1
+```
+
+이후에만 기존 대용량 로그의 보존 필요를 판단하십시오. 로그를 버려도 된다면 필요한 마지막 부분을 먼저 보관한 뒤 `logrotate`를 실행하거나 대상 파일을 비워 디스크 공간을 회수하십시오. 원인을 수정하기 전에 로그만 지우면 즉시 다시 커집니다.
+
 ## 조회
 
 조회 소켓은 `/run/net-scouter/query.sock`이고 root만 열 수 있습니다. 에이전트가 없으면 `status`는 `/run/net-scouter/status.json`을 읽습니다. 이 파일에는 흐름 목록이 없고, 프로세스가 없으면 오래된 상태로 표시됩니다. `mode: persistent`인 경우 `flows`는 저장된 DB를 읽어 오프라인에서도 결과를 표시합니다. exporter 모드에는 오프라인 이력이 없습니다.
