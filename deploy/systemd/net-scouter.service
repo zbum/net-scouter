@@ -12,6 +12,13 @@ RuntimeDirectoryMode=0700
 StateDirectory=net-scouter
 StateDirectoryMode=0700
 LimitMEMLOCK=infinity
+# Flow JSON is available through the query socket, metrics, or persistent DB.
+# Never forward legacy stdout export to journald/rsyslog.
+StandardOutput=null
+StandardError=journal
+SyslogIdentifier=net-scouter
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=100
 Restart=on-failure
 RestartSec=5
 

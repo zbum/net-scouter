@@ -63,7 +63,7 @@ RPM은 `https://nexus.manty.co.kr/repository/yum-hosted/net-scouter/`에 게시�
 바이너리와 `/usr/lib/net-scouter/flow.bpf.o`를 함께 교체해야 BPF 수정이 적용됩니다. `make build-all`은 deb 패키지를 갱신하지 않습니다. 같은 릴리스의 수정 패키지는 `DEB_REVISION=2 make deb`처럼 revision을 지정해 새로 빌드하십시오. 실제 버전과 파일 경로는 `dist/deb/latest.env`에서 확인합니다.
 
 ```bash
-sudo apt install ./net-scouter_0.1.7-1_amd64.deb
+sudo apt install ./net-scouter_0.1.8-1_amd64.deb
 sudo systemctl restart net-scouter
 sudo net-scouter status
 sudo journalctl -u net-scouter -n 100 --no-pager
@@ -129,6 +129,26 @@ sudo systemctl status net-scouter --no-pager
 sudo net-scouter run --config /etc/net-scouter/net-scouter.yaml
 ```
 
+### syslog가 빠르게 커지는 경우
+
+이전 설정의 `export.type: stdout`이 남아 있으면 변경된 flow JSONL이 집계 주기마다 systemd로 출력됩니다. 신규 서비스 유닛은 stdout을 폐기하고 stderr만 rate limit을 적용해 journal에 남깁니다. 기존 서버에서는 `/etc/net-scouter/net-scouter.yaml`의 다음 레거시 블록을 제거하십시오.
+
+```yaml
+export:
+  type: stdout
+```
+
+패키지 업데이트 후 유닛과 서비스를 다시 읽고, 설정과 로그 증가가 멈춼는지 확인합니다.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart net-scouter
+sudo journalctl -u net-scouter -n 100 --no-pager
+sudo du -h /var/log/syslog /var/log/syslog.1
+```
+
+이후에만 기존 대용량 로그의 보존 필요를 판단하십시오. 로그를 버려도 된다면 필요한 마지막 부분을 먼저 보관한 뒤 `logrotate`를 실행하거나 대상 파일을 비워 디스크 공간을 회수하십시오. 원인을 수정하기 전에 로그만 지우면 즉시 다시 커집니다.
+
 ## 조회
 
 조회 소켓은 `/run/net-scouter/query.sock`이고 root만 열 수 있습니다. 에이전트가 없으면 `status`는 `/run/net-scouter/status.json`을 읽습니다. 이 파일에는 흐름 목록이 없고, 프로세스가 없으면 오래된 상태로 표시됩니다. `mode: persistent`인 경우 `flows`는 저장된 DB를 읽어 오프라인에서도 결과를 표시합니다. exporter 모드에는 오프라인 이력이 없습니다.
@@ -185,7 +205,7 @@ sudo net-scouter flows --help
 
 ## 패키지를 만들 때
 
-릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.7`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
+릴리스 버전은 루트의 `VERSION` 파일입니다. `release/<version>`에서 이 값을 올리고 `main`과 `develop`에 머지합니다. 현재 릴리스는 `0.1.8`입니다. `VERSION`이 없는 개발 빌드만 `0.0.0+UTC시각.git해시`를 쓰며, apt와 dnf는 그 형식도 이전 `0+git` 패키지보다 새로운 것으로 봅니다.
 
 BPF 컴파일은 로컬 이미지 `net-scouter-deb-build:22.04`와 `net-scouter-rpm-build:8`을 사용합니다. 없으면 한 번 만들고, 이후에는 다시 받지 않습니다. Dockerfile을 바꾸면 `make package-images`로 다시 만듭니다.
 

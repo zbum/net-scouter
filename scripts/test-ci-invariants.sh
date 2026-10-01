@@ -4,6 +4,7 @@ set -euo pipefail
 jenkinsfile=Jenkinsfile
 makefile=Makefile
 loader=scripts/verify-bpf-load.sh
+service=deploy/systemd/net-scouter.service
 
 grep -q "name: 'RUN_KERNEL_VERIFIERS', defaultValue: false" "$jenkinsfile"
 grep -q "NEXUS_CREDENTIALS_ID = 'nexus-credentials'" "$jenkinsfile"
@@ -43,6 +44,11 @@ grep -q 'trap cleanup EXIT INT TERM' "$loader"
 grep -q 'pin_dir=$(mktemp -d "${pin_root}/net-scouter-verify.XXXXXXXX")' "$loader"
 grep -q 'owns_pin_dir=1' "$loader"
 grep -q '\[\[ "$owns_pin_dir" -eq 1' "$loader"
+grep -q '^StandardOutput=null$' "$service"
+grep -q '^StandardError=journal$' "$service"
+grep -q '^SyslogIdentifier=net-scouter$' "$service"
+grep -q '^LogRateLimitIntervalSec=30s$' "$service"
+grep -q '^LogRateLimitBurst=100$' "$service"
 
 if grep -Eqi '\b(tc|ip) (qdisc|filter|link)|bpftool net attach|bpftool prog attach' "$loader" "$jenkinsfile"; then
   echo "CI verifier gate must never attach programs or alter interfaces" >&2
