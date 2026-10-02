@@ -39,28 +39,30 @@ type Response struct {
 }
 
 type Status struct {
-	Mode               string           `json:"mode"`
-	Live               bool             `json:"live"`
-	Stale              bool             `json:"stale"`
-	Running            bool             `json:"running"`
-	Source             string           `json:"source"`
-	PID                int              `json:"pid,omitempty"`
-	StartedAt          time.Time        `json:"startedAt,omitempty"`
-	LastSnapshotAt     time.Time        `json:"lastSnapshotAt,omitempty"`
-	Interfaces         []string         `json:"interfaces"`
-	HostAddresses      []string         `json:"hostAddresses,omitempty"`
-	Interval           string           `json:"interval,omitempty"`
-	ObservedFrom       time.Time        `json:"observedFrom,omitempty"`
-	ObservedTo         time.Time        `json:"observedTo,omitempty"`
-	Map                MapStatus        `json:"map"`
-	Connections        ConnectionStatus `json:"connections"`
-	Exclude            ExcludeStatus    `json:"exclude"`
-	Storage            StorageStatus    `json:"storage"`
-	Exporter           ExporterStatus   `json:"exporter"`
-	DurableStorage     string           `json:"durableStorage"`
-	DurableReason      string           `json:"durableStorageReason"`
-	MemoryEvictedTotal uint64           `json:"memoryEvictedTotal"`
-	LastError          string           `json:"lastError,omitempty"`
+	DockerNetworks       []string         `json:"dockerNetworks"`
+	DockerDiscoveryError string           `json:"dockerDiscoveryError,omitempty"`
+	Mode                 string           `json:"mode"`
+	Live                 bool             `json:"live"`
+	Stale                bool             `json:"stale"`
+	Running              bool             `json:"running"`
+	Source               string           `json:"source"`
+	PID                  int              `json:"pid,omitempty"`
+	StartedAt            time.Time        `json:"startedAt,omitempty"`
+	LastSnapshotAt       time.Time        `json:"lastSnapshotAt,omitempty"`
+	Interfaces           []string         `json:"interfaces"`
+	HostAddresses        []string         `json:"hostAddresses,omitempty"`
+	Interval             string           `json:"interval,omitempty"`
+	ObservedFrom         time.Time        `json:"observedFrom,omitempty"`
+	ObservedTo           time.Time        `json:"observedTo,omitempty"`
+	Map                  MapStatus        `json:"map"`
+	Connections          ConnectionStatus `json:"connections"`
+	Exclude              ExcludeStatus    `json:"exclude"`
+	Storage              StorageStatus    `json:"storage"`
+	Exporter             ExporterStatus   `json:"exporter"`
+	DurableStorage       string           `json:"durableStorage"`
+	DurableReason        string           `json:"durableStorageReason"`
+	MemoryEvictedTotal   uint64           `json:"memoryEvictedTotal"`
+	LastError            string           `json:"lastError,omitempty"`
 }
 
 type StorageStatus struct {

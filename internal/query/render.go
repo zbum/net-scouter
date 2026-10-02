@@ -50,6 +50,10 @@ func PrepareFlows(records []flow.Record, connectionsAvailable bool, abi, detail 
 
 func FormatStatus(st Status) string {
 	var b strings.Builder
+	fmt.Fprintf(&b, "Docker exclusions:     %s\n", joinOrNone(st.DockerNetworks))
+	if st.DockerDiscoveryError != "" {
+		fmt.Fprintf(&b, "Docker discovery error: %s\n", st.DockerDiscoveryError)
+	}
 	fmt.Fprintf(&b, "state:                 %s\n", stateText(st))
 	fmt.Fprintf(&b, "source:                %s\n", empty(st.Source, "none"))
 	if st.Mode != "" {
