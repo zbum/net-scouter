@@ -2,6 +2,17 @@
 
 이 문서는 `net-scouter`의 사용자 관점 변경 사항을 기록한다.
 
+## [Unreleased]
+
+### Added
+
+- Docker 표준 브리지의 IPv4/IPv6 서브넷을 자동 감지해 양쪽 끝점 중 하나가 해당 대역인 흐름을 집계·조회·metrics·영속 저장에서 제외한다. 30초 주기로 재감지하고 적용 대역과 오류를 status에 표시한다.
+
+### 검증 — 2026-10-02 (`feature/exclude-docker-networks`)
+
+- Docker 소켓 없이 표준 브리지 이름과 인터페이스 주소로 감지한다. 사용자 지정 브리지·host 네트워크 및 NAT 후 호스트 주소만 남은 흐름은 자동 식별에 제한이 있다.
+- 전체 테스트와 Linux·Windows·macOS amd64 빌드를 통과했다. 실제 Ubuntu 서버의 트래픽 수집 검증은 별도로 필요하다.
+
 ## [0.1.8] - 2026-10-01
 
 ### Fixed

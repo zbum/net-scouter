@@ -203,21 +203,27 @@ func (a *Agent) applySnapshot(raw []flow.Record) ([]flow.Record, query.Status) {
 }
 
 func (a *Agent) statusLocked() query.Status {
+	dockerNetworks := make([]string, 0, len(a.dockerNetworks))
+	for _, prefix := range a.dockerNetworks {
+		dockerNetworks = append(dockerNetworks, prefix.String())
+	}
 	entries := a.mapEntries
 	atCapacity := a.maxFlows > 0 && uint32(entries) >= a.maxFlows
 	st := query.Status{
-		Mode:           a.mode,
-		Live:           true,
-		Running:        true,
-		Source:         "agent",
-		PID:            os.Getpid(),
-		StartedAt:      a.startedAt,
-		LastSnapshotAt: a.lastSnapshotAt,
-		Interfaces:     copyStrings(a.obs.Interfaces),
-		HostAddresses:  copyStrings(a.obs.HostAddresses),
-		Interval:       a.interval.String(),
-		ObservedFrom:   a.observedFrom,
-		ObservedTo:     a.observedTo,
+		DockerNetworks:       dockerNetworks,
+		DockerDiscoveryError: a.dockerError,
+		Mode:                 a.mode,
+		Live:                 true,
+		Running:              true,
+		Source:               "agent",
+		PID:                  os.Getpid(),
+		StartedAt:            a.startedAt,
+		LastSnapshotAt:       a.lastSnapshotAt,
+		Interfaces:           copyStrings(a.obs.Interfaces),
+		HostAddresses:        copyStrings(a.obs.HostAddresses),
+		Interval:             a.interval.String(),
+		ObservedFrom:         a.observedFrom,
+		ObservedTo:           a.observedTo,
 		Map: query.MapStatus{
 			Entries:      entries,
 			MaxEntries:   a.maxFlows,

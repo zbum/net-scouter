@@ -151,6 +151,21 @@ sudo du -h /var/log/syslog /var/log/syslog.1
 
 ## 조회
 
+### Docker 네트워크 자동 제외
+
+별도 설정 없이 로컬 `docker0`와 `br-<12자리 16진수 네트워크 ID>` 인터페이스의 IPv4/IPv6 서브넷을 감지합니다. 예를 들어 브리지에 `172.18.0.1/16`이 할당되어 있으면 `172.18.0.4`를 포함한 해당 대역이 출발지 또는 목적지인 흐름을 제외합니다. `172.16.0.0/12` 같은 사설망 전체를 일괄 제외하지 않습니다.
+
+에이전트 시작 시 감지하고, 수집·조회 시 마지막 감지로부터 30초 이상 지났으면 갱신합니다. 감지된 흐름은 집계 전에 제외되어 조회(table/JSON/JSONL, `--attempts`, `--local` 포함), metrics, 영속 저장 및 레거시 stdout에 나타나지 않습니다. 새로 감지한 대역의 기존 메모리 이력은 제거하며, 이미 저장된 이력은 다음 성공한 flush에서 삭제합니다. 오프라인 조회도 현재 호스트에서 감지한 대역을 적용하지만 DB를 변경하지는 않습니다.
+
+```bash
+sudo systemctl restart net-scouter
+sudo net-scouter status
+```
+
+`Docker exclusions`에 적용 중인 대역이 표시됩니다. 최초 감지 실패는 시작 오류이며, 실행 중 갱신 실패는 기존 대역을 유지하고 `Docker discovery error`에 표시합니다. Docker CLI나 Docker 소켓 접근은 필요하지 않습니다. 커널 BPF 맵의 원시 이벤트 수집 자체를 중단하는 기능은 아닙니다.
+
+감지는 표준 브리지 이름을 기준으로 합니다. 사용자 지정 브리지 이름, rootless/overlay/macvlan 네트워크와 host 네트워크 모드는 자동 식별하지 못할 수 있습니다. 해당 환경은 기존 방향별 CIDR 제외 설정을 사용하십시오. NAT 후 호스트 주소만 남은 흐름도 이 규칙으로 구분할 수 없습니다. 브리지 이름이 우연히 같은 다른 네트워크도 제외되므로 `status`의 대역을 확인하십시오.
+
 조회 소켓은 `/run/net-scouter/query.sock`이고 root만 열 수 있습니다. 에이전트가 없으면 `status`는 `/run/net-scouter/status.json`을 읽습니다. 이 파일에는 흐름 목록이 없고, 프로세스가 없으면 오래된 상태로 표시됩니다. `mode: persistent`인 경우 `flows`는 저장된 DB를 읽어 오프라인에서도 결과를 표시합니다. exporter 모드에는 오프라인 이력이 없습니다.
 
 ```bash
