@@ -49,6 +49,8 @@
 
 첫 구현은 XDP가 아니라 TC ingress/egress다. 목적은 관찰이지 패킷 필터링이 아니다.
 
+두 TC 함수는 같은 `SEC("classifier")`를 사용한다. 로더는 함수 이름으로 `observe_ingress`를 ingress hook에, `observe_egress`를 egress hook에 연결한다. 방향은 ELF section 이름이 아니라 이 연결 위치와 각 함수가 전달하는 `FLOW_INGRESS`/`FLOW_EGRESS`로 구분한다.
+
 Go 에이전트가 오브젝트를 읽고, 설정한 인터페이스에만 붙인다. 시작 시 선택한 모든 NIC의 활성 IP family 주소를 조회해 BPF `host_addrs` map에 넣는다. TC와 TCP tracepoint는 로컬 끝점이 이 주소 집합에 속하는 흐름만 집계한다. 선택한 NIC를 읽을 수 없거나 활성 family 주소가 전혀 없으면 수집을 시작하지 않는다. 이미 붙인 TC 자원은 종료 경로에서 정리되며 패킷은 언제나 통과한다. IP를 바꾼 뒤에는 에이전트를 재시작해 주소 집합을 다시 읽어야 한다. TCP 연결 수는 `sock:inet_sock_set_state`의 `TCP_ESTABLISHED` 전이로 센다. tracefs format을 읽어 Linux 4.18(`protocol` u8, 주소 offset 31)과 5.15(`protocol` u16, 주소 offset 32) 중 맞는 variant 하나만 붙인다. 둘 다 붙이지 않는다. ABI를 모르면 연결 수만 끄고 패킷과 바이트 수집은 계속하지만, 기본 TCP 결과와 stdout export는 성공 여부가 확인되지 않은 행을 숨긴다.
 
 집계 맵은 `BPF_MAP_TYPE_LRU_HASH`다. 기본 `maxFlows`는 65536이고 시작 때 그 크기만큼 잡는다. 키와 값을 합쳐 항목당 약 150바이트 안쪽이라 전체는 10MB 안팎이다. 꽉 차면 가장 오래 안 보인 항목을 버린다. 맵은 프로세스와 함께 사라진다. Go 에이전트는 각 raw map entry의 `FirstSeenNS` epoch와 counter high-water를 기억하고 증가분만 ACL 키로 합친다. TCP는 성립 횟수가 있는 행만 집계하며 UDP는 패킷 기준으로 집계한다. 카운터 감소는 이전 상한을 유지하고 `possible loss`로 알린다.
@@ -170,9 +172,20 @@ bpf/flow.bpf.c
 dist/flow.bpf.o + dist/net-scouter-linux-$GOARCH
 ```
 
-BPF 타깃이 있는 clang과 Linux UAPI 헤더가 설치된 Linux 호스트에서는 `make build-bpf`로 빌드한다. Ubuntu는 `linux-libc-dev`, Rocky Linux는 `kernel-headers` 패키지가 필요하다. BPF helper ID, 맵 상수, `__sk_buff`는 `<linux/bpf.h>`, 정수 타입은 `<linux/types.h>`의 공식 정의를 사용한다. libbpf 개발 패키지는 필요하지 않다. Ubuntu의 multiarch 헤더 경로는 Makefile에서 추가하며, 별도 sysroot를 사용하면 `BPF_CPPFLAGS`로 재정의한다.
+BPF 타깃이 있는 clang에서는 `make build-bpf`로 빌드한다. 커널 타입, BPF helper ID와 맵 상수는 저장소의 `bpf/vmlinux.h`를 사용하므로 Linux UAPI 헤더나 libbpf 개발 패키지를 설치할 필요가 없다. 추가 compiler 옵션은 `BPF_CPPFLAGS`로 지정한다.
 
-Apple clang에는 BPF 타깃이 없으므로 macOS의 BPF 빌드와 검사는 다음 Linux 이미지를 쓴다.
+`vmlinux.h`는 libbpf 프로젝트가 BTF에서 생성한 헤더에서 정수 타입, BPF enum, `__sk_buff`만 추출한 최소 헤더다. 원본 버전과 경로는 헤더 상단에 고정되어 있다. BPF 타깃에서는 `preserve_access_index`를 적용하여 TC context 필드 접근에 CO-RE relocation을 생성하고, 기존 `cilium/ebpf` 로더가 대상 커널 BTF로 이를 해석한다. 실행 호스트에는 해당 타입이 있는 커널 BTF가 필요하다. 패킷 wire-format 구조체와 기존 TCP tracepoint u8/u16 ABI 선택은 그대로 유지한다.
+
+macOS IntelliJ에서 `bpf/flow.bpf.c`를 열면 같은 디렉터리의 `flow.h` → `vmlinux.h`를 상대 경로로 찾는다. 별도 Linux SDK include 경로는 필요하지 않으며, C/C++ 분석 기능을 지원하는 IDE 또는 플러그인은 별도로 필요하다. Apple clang 호스트 검사에서는 CO-RE attribute와 ELF section attribute를 적용하지 않는다.
+
+```bash
+# macOS에서도 Docker 없이 문법과 패킷 파서 검사
+./scripts/test-bpf-invariants.sh
+```
+
+헤더를 갱신할 때는 Linux에서 `bpftool btf dump file /sys/kernel/btf/vmlinux format c`로 생성하거나 헤더에 명시한 libbpf 원본을 사용한다. 필요한 타입과 enum을 추출하고 출처를 갱신한다. 전체 dump로 대체하면 프로젝트의 패킷 구조체 이름과 충돌할 수 있으므로 그대로 덮어쓰지 않는다. 갱신 후 호스트 검사, Ubuntu/Rocky BPF 빌드, 지원 커널에서의 `make verify-bpf-load`를 수행한다.
+
+Apple clang에는 BPF 타깃이 없으므로 macOS의 BPF 오브젝트 빌드는 다음 Linux 이미지를 쓴다.
 
 - `net-scouter-deb-build:22.04`: Ubuntu 22.04, clang, make, linux-libc-dev
 - `net-scouter-rpm-build:8`: Rocky Linux 8, clang, make, rpm-build, kernel-headers
@@ -184,7 +197,7 @@ make deb
 make rpm
 ```
 
-이미지가 없으면 패키징 스크립트와 macOS BPF 검사가 자동으로 만든다. `make build-bpf-image`는 이미지 빌드 후 BPF를 컴파일한다. Dockerfile 변경 후 기존 이미지는 `make package-images`로 갱신한다. 컨테이너는 현재 uid로 실행해서 산출물이 root 소유가 되지 않는다. macOS의 `make test`는 BPF 문법·주소 검사만 Ubuntu 컨테이너에서 실행하므로 Docker가 필요하고, Go 테스트는 호스트에서 실행한다.
+이미지가 없으면 패키징 스크립트가 자동으로 만든다. `make build-bpf-image`는 이미지 빌드 후 BPF를 컴파일한다. Dockerfile 변경 후 기존 이미지는 `make package-images`로 갱신한다. 컨테이너는 현재 uid로 실행해서 산출물이 root 소유가 되지 않는다. macOS의 `make test`는 BPF 문법·주소 검사와 Go 테스트를 모두 호스트에서 실행하므로 Docker가 필요하지 않다.
 
 Go 바이너리는 `CGO_ENABLED=0`으로 빌드 머신의 libc에 묶이지 않는다. BPF 오브젝트는 배포판용이 아니다. 커널이 받아들이는지는 지원 커널에서 따로 본다.
 
@@ -194,7 +207,7 @@ IPv4/IPv6 파서는 IP 헤더가 선언한 길이와 skb 경계를 넘지 않는
 
 Jenkinsfile은 `linux && amd64 && ubuntu-build` 노드와 `linux && amd64 && rocky-build` 노드에서 두 빌드를 병렬로 실행한다. 두 노드 모두 Git, Go 1.26 이상, Make, Docker, `file`, Clang이 필요하며, 빌드 시작 즉시 도구, Go 버전과 Docker daemon을 점검한다. Go 바이너리는 호스트 Jenkins 노드에서 빌드하고 패키지 Docker 이미지는 BPF와 배포 패키지 생성에 사용하므로, 두 Jenkins 노드 자체에 Go 1.26 이상을 설치해야 한다.
 
-호스트에서 실행하는 BPF 검사에도 Linux UAPI 헤더가 필요하므로 Ubuntu Jenkins 노드에는 `linux-libc-dev`, Rocky 노드에는 `kernel-headers`를 설치한다.
+호스트의 BPF 문법·주소 검사는 저장소에 포함한 `vmlinux.h`를 사용하므로 Linux UAPI 헤더 패키지가 필요하지 않다.
 
 `release/<version>` 브랜치는 루트 `VERSION`과 버전이 같아야 한다. Jenkins는 다르면 빌드를 중단하고, 같으면 빌드 표시명을 `#<build> v<version>`으로 설정한다.
 

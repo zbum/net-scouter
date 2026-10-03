@@ -488,3 +488,30 @@ persistent 모드의 userspace 집계는 flush가 연속 실패해도 `storage.m
 
 - 개발·CI·패키징 환경은 Go 1.26 이상을 준비해야 한다.
 - Rocky/Ubuntu 배포 서버에 Go toolchain을 설치할 필요는 없다. 대상 커널에서의 verifier load와 실제 수집 통합 시험은 별도로 수행한다.
+
+
+---
+
+## ADR-013 — vmlinux.h 기반 CO-RE 빌드
+
+**Status:** accepted
+
+**Context**
+
+macOS 개발 환경에는 Linux UAPI 헤더가 없어 IntelliJ가 `linux/bpf.h`와
+`linux/types.h`를 해석하지 못한다. 빌드 호스트의 헤더 패키지에도 의존한다.
+
+**Decision**
+
+BTF에서 생성된 공식 libbpf vmlinux 헤더의 최소 subset을 `bpf/vmlinux.h`에
+포함한다. 원본 commit과 경로를 기록하고 타입 및 enum 값은 원본을 유지한다.
+TC context에는 BPF 컴파일 시 `preserve_access_index`를 적용하며 기존
+cilium/ebpf 로더가 CO-RE relocation을 처리한다. BTF map 정의를 사용한다.
+패킷 구조체와 TCP tracepoint의 두 ABI 선택은 유지한다.
+
+**Consequences**
+
+- IDE와 호스트 테스트에서 Linux 헤더 및 Docker 의존성을 없앤다.
+- BPF 오브젝트 생성에는 BPF 타깃 clang이 필요하다.
+- 실행 호스트에는 `__sk_buff` 타입을 포함한 커널 BTF가 필요하다.
+- 헤더 갱신 시 출처 기록, 호스트 테스트, 두 배포판 빌드와 verifier 검증을 수행한다.

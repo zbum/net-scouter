@@ -1,7 +1,7 @@
 #ifndef __NET_SCOUTER_FLOW_H
 #define __NET_SCOUTER_FLOW_H
 
-#include <linux/types.h>
+#include "vmlinux.h"
 
 #define FLOW_INGRESS 1
 #define FLOW_EGRESS  2

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "flow.h"
-#include <linux/bpf.h>
 
-#ifdef NET_SCOUTER_BPF_HOST_TEST
+#if defined(NET_SCOUTER_BPF_HOST_TEST) || defined(__APPLE__)
 #define SEC(name) __attribute__((used))
 #else
 #define SEC(name) __attribute__((section(name), used))
@@ -28,13 +27,9 @@
 #define TCP_SYN_RECV 3
 #define TCP_NEW_SYN_RECV 12
 
-struct bpf_map_def {
-    __u32 type;
-    __u32 key_size;
-    __u32 value_size;
-    __u32 max_entries;
-    __u32 map_flags;
-};
+/* Encode map attributes and key/value types in ELF BTF for the loader. */
+#define __uint(name, value) int (*name)[value]
+#define __type(name, value) typeof(value) *name
 
 struct eth_hdr { __u8 dst[6]; __u8 src[6]; __u16 protocol; };
 struct vlan_hdr { __u16 tci; __u16 protocol; };
@@ -145,12 +140,12 @@ _Static_assert(__builtin_offsetof(struct inet_sock_set_state_v5_15,
                                   daddr_v6) == 56,
                "unexpected v5.15 IPv6 address offset");
 
-struct bpf_map_def SEC("maps") flows = {
-    .type = BPF_MAP_TYPE_LRU_HASH,
-    .key_size = sizeof(struct flow_key),
-    .value_size = sizeof(struct flow_value),
-    .max_entries = 65536,
-};
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __type(key, struct flow_key);
+    __type(value, struct flow_value);
+    __uint(max_entries, 65536);
+} flows SEC(".maps");
 
 struct capture_cfg {
     __u8 ipv4;
@@ -159,19 +154,19 @@ struct capture_cfg {
     __u8 udp;
 };
 
-struct bpf_map_def SEC("maps") capture_cfg = {
-    .type = BPF_MAP_TYPE_ARRAY,
-    .key_size = sizeof(__u32),
-    .value_size = sizeof(struct capture_cfg),
-    .max_entries = 1,
-};
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, struct capture_cfg);
+    __uint(max_entries, 1);
+} capture_cfg SEC(".maps");
 
-struct bpf_map_def SEC("maps") host_addrs = {
-    .type = BPF_MAP_TYPE_HASH,
-    .key_size = sizeof(struct host_addr_key),
-    .value_size = sizeof(__u8),
-    .max_entries = 256,
-};
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct host_addr_key);
+    __type(value, __u8);
+    __uint(max_entries, 256);
+} host_addrs SEC(".maps");
 
 static void *(*bpf_map_lookup_elem)(void *map, const void *key) =
     (void *)BPF_FUNC_map_lookup_elem;
@@ -602,13 +597,13 @@ static __always_inline int observe(struct __sk_buff *skb, __u8 direction)
     return TC_ACT_OK;
 }
 
-SEC("classifier/ingress")
+SEC("classifier")
 int observe_ingress(struct __sk_buff *skb)
 {
     return observe(skb, FLOW_INGRESS);
 }
 
-SEC("classifier/egress")
+SEC("classifier")
 int observe_egress(struct __sk_buff *skb)
 {
     return observe(skb, FLOW_EGRESS);
