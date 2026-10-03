@@ -2,6 +2,8 @@
 
 Rocky Linux 8.10 / RHEL 8 계열과 Ubuntu 22.04 이상을 대상으로 합니다. 배포판 버전보다 커널의 eBPF, BTF, TC 기능이 중요합니다. 패키지는 서비스를 자동으로 시작하지 않습니다.
 
+CO-RE BPF 오브젝트를 로드하려면 실행 커널의 BTF에 `__sk_buff` 타입이 있어야 합니다. 일반적인 BTF 경로는 `/sys/kernel/btf/vmlinux`입니다. `net-scouter check`의 BTF 경고는 시작 전에 확인하십시오.
+
 ## Nexus 저장소에서 설치 (우선 권장)
 
 패키지 서버는 `https://nexus.manty.co.kr`입니다. 아래 안내는 소스와 APT 공개키를 `https://github.com/zubm/net-scouter`의 `main` 브랜치에 배포하고, Nexus 저장소를 읽을 수 있는 환경을 기준으로 합니다.

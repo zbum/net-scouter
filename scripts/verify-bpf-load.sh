@@ -31,7 +31,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-pin_dir=$(mktemp -d "${pin_root}/net-scouter-verify.XXXXXXXX")
+# bpffs rejects names containing dots.
+pin_dir=$(mktemp -d "${pin_root}/net-scouter-verify-XXXXXXXX")
 owns_pin_dir=1
 bpftool prog loadall "$object" "$pin_dir"
 
