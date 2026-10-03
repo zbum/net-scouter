@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-03
+
 ### Changed
 
 - Linux UAPI 헤더 대신 저장소의 최소 `vmlinux.h`와 CO-RE를 사용한다. macOS에서 Linux 헤더나 Docker 없이 BPF 문법·파서 검사가 가능하며, 실행 커널에는 `__sk_buff` 타입을 포함한 BTF가 필요하다.
