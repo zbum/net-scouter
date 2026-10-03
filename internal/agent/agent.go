@@ -20,6 +20,10 @@ import (
 type Snapshotter interface{ Snapshot() ([]flow.Record, error) }
 
 type Agent struct {
+	dockerNetworks     []netip.Prefix
+	dockerLookup       func() ([]netip.Prefix, error)
+	dockerChecked      time.Time
+	dockerError        string
 	source             Snapshotter
 	output             io.Writer
 	interval           time.Duration
@@ -325,6 +329,7 @@ func (a *Agent) pruneCache() {
 }
 
 func (a *Agent) visible(records []flow.Record) []flow.Record {
+	a.refreshDockerNetworks()
 	records = flow.ForACL(records)
 	out := make([]flow.Record, 0, len(records))
 	for _, record := range records {
@@ -377,6 +382,11 @@ func (a *Agent) SetCapture(ipv4, ipv6, tcp, udp bool) {
 }
 
 func (a *Agent) excluded(r flow.Record) bool {
+	for _, prefix := range a.dockerNetworks {
+		if prefix.Contains(r.SrcIP.Unmap()) || prefix.Contains(r.DstIP.Unmap()) {
+			return true
+		}
+	}
 	for _, prefix := range a.destinations {
 		if prefix.Contains(r.DstIP.Unmap()) {
 			return true

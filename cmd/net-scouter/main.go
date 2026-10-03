@@ -126,6 +126,9 @@ func run(args []string) (runErr error) {
 		return err
 	}
 	a.SetRuntime(cfg.Interfaces, enabled, abi, detail)
+	if err := a.EnableDockerExclusions(); err != nil {
+		return err
+	}
 	a.SetCapture(*cfg.Capture.IPv4, *cfg.Capture.IPv6, *cfg.Capture.TCP, *cfg.Capture.UDP)
 	if cfg.Export.Type == "stdout" {
 		a.EnableLegacyStdout()

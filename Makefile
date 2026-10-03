@@ -4,8 +4,7 @@ BPF_OBJECT := $(DIST_DIR)/flow.bpf.o
 BPF_CLANG ?= clang
 BPF_ARCH ?= x86
 BPF_CPU ?= v1
-# Debian/Ubuntu install asm/types.h in a multiarch include directory.
-BPF_CPPFLAGS ?= $(addprefix -isystem ,$(wildcard /usr/include/*-linux-gnu))
+BPF_CPPFLAGS ?=
 GO ?= go
 GOARCH ?= amd64
 DOCKER ?= docker

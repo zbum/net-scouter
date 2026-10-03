@@ -184,6 +184,7 @@ func (a *Agent) observeLocked() ([]flow.Record, error) {
 }
 
 func (a *Agent) ingestLocked(snapshot []flow.Record) error {
+	a.refreshDockerNetworks()
 	if a.storageNeedsReload {
 		if err := a.reloadCommittedLocked(); err != nil {
 			return err
@@ -459,6 +460,10 @@ func FilterHistoricalRecords(records []flow.Record, destinations, workloads []st
 		return nil, err
 	}
 	a := &Agent{destinations: dest, workloads: work}
+	a.dockerNetworks, err = DockerNetworks()
+	if err != nil {
+		return nil, fmt.Errorf("discover Docker networks: %w", err)
+	}
 	if err := a.SetDirectionalExclusions(ingress, egress); err != nil {
 		return nil, err
 	}

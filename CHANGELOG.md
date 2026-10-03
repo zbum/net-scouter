@@ -2,6 +2,34 @@
 
 이 문서는 `net-scouter`의 사용자 관점 변경 사항을 기록한다.
 
+## [Unreleased]
+
+## [0.1.9] - 2026-10-03
+
+### Changed
+
+- Linux UAPI 헤더 대신 저장소의 최소 `vmlinux.h`와 CO-RE를 사용한다. macOS에서 Linux 헤더나 Docker 없이 BPF 문법·파서 검사가 가능하며, 실행 커널에는 `__sk_buff` 타입을 포함한 BTF가 필요하다.
+- BPF 맵을 BTF `.maps` 정의로 전환하고 TC 프로그램에 표준 `classifier` 섹션을 사용한다. ingress/egress 연결은 기존 로더가 함수 이름으로 구분한다.
+
+### Fixed
+
+- 커널 로드 검증 스크립트에서 bpffs가 거부하는 점이 포함된 임시 디렉터리 이름을 수정했다.
+
+### 검증 — 2026-10-03 (`feature/btf-map-definitions`)
+
+- 전체 테스트, Linux amd64/arm64 및 Windows·macOS amd64 빌드, Ubuntu/Rocky 8 이미지의 BPF 컴파일을 통과했다.
+- Docker VM의 Linux 6.8 ARM64에서 네 프로그램의 verifier 로드와 실제 Go 로더의 TC attach를 확인했다. 격리된 veth에서 UDP ingress/egress를 각각 한 패킷씩 검증하고 종료 후 TC 필터와 pin 정리를 확인했다.
+- Rocky 8 및 Ubuntu 배포 대상 커널별 검증은 별도로 필요하다.
+
+### Added
+
+- Docker 표준 브리지의 IPv4/IPv6 서브넷을 자동 감지해 양쪽 끝점 중 하나가 해당 대역인 흐름을 집계·조회·metrics·영속 저장에서 제외한다. 30초 주기로 재감지하고 적용 대역과 오류를 status에 표시한다.
+
+### 검증 — 2026-10-02 (`feature/exclude-docker-networks`)
+
+- Docker 소켓 없이 표준 브리지 이름과 인터페이스 주소로 감지한다. 사용자 지정 브리지·host 네트워크 및 NAT 후 호스트 주소만 남은 흐름은 자동 식별에 제한이 있다.
+- 전체 테스트와 Linux·Windows·macOS amd64 빌드를 통과했다. 실제 Ubuntu 서버의 트래픽 수집 검증은 별도로 필요하다.
+
 ## [0.1.8] - 2026-10-01
 
 ### Fixed

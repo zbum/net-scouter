@@ -1,19 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$(uname -s)" != "Linux" ]]; then
-  root=$(cd "$(dirname "$0")/.." && pwd)
-  image="${DEB_BUILD_IMAGE:-net-scouter-deb-build:22.04}"
-  platform="${DEB_BUILD_PLATFORM:-linux/amd64}"
-  "$root/scripts/ensure-build-image.sh" "$image" "$root/deploy/docker/deb-build.Dockerfile" "$platform"
-  exec docker run --rm --platform "$platform" --network none \
-    -u "$(id -u):$(id -g)" -v "$root:/work:ro" -w /work \
-    "$image" bash scripts/test-bpf-invariants.sh
-fi
-
 source_file="bpf/flow.bpf.c"
 BPF_CLANG="${BPF_CLANG:-clang}"
-classifiers=$(grep -c '^SEC("classifier/' "$source_file")
+classifiers=$(grep -c '^SEC("classifier")' "$source_file")
 act_ok_returns=$(grep -c 'return TC_ACT_OK;' "$source_file")
 
 if [[ "$classifiers" -ne 2 ]]; then
@@ -90,11 +80,12 @@ if [[ $(grep -c 'bpf_map_lookup_elem(&flows, key)' "$source_file") -lt 2 ]]; the
   exit 1
 fi
 
-"$BPF_CLANG" -std=gnu11 -fsyntax-only \
+# No system includes: this must work on macOS as well as Linux.
+"$BPF_CLANG" -std=gnu11 -nostdinc -fsyntax-only \
   -Wall -Wextra -Werror -Ibpf "$source_file"
 address_test=$(mktemp)
 trap 'rm -f "$address_test"' EXIT
-"$BPF_CLANG" -std=gnu11 -O2 -Wall -Wextra -Werror -Ibpf \
+"$BPF_CLANG" -std=gnu11 -nostdinc -O2 -Wall -Wextra -Werror -Ibpf \
   scripts/test-bpf-addresses.c -o "$address_test"
 "$address_test"
 echo "eBPF safety invariants: OK"
